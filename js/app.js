@@ -1,0 +1,929 @@
+/* ATEMPO — SPA estática (hash routing), interações mockadas */
+(function () {
+  'use strict';
+
+  var D = window.ATEMPO_DATA;
+  var ICONS = window.ICONS;
+  var ART = window.ART;
+  var FORMATS = D.formatos;
+  var app = document.getElementById('app');
+  var modalRoot = document.getElementById('modal-root');
+  var toastEl = document.getElementById('toast');
+
+  /* ---------- utilitários ---------- */
+  function ic(n, cls, sw) {
+    return '<svg class="ic' + (cls ? ' ' + cls : '') + '" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="' + (sw || 1.8) + '" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + (ICONS[n] || '') + '</svg>';
+  }
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
+  }
+  function norm(s) { return String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); }
+  function map(a, f) { return a.map(f).join(''); }
+  function fmtTime(s) { s = Math.max(0, Math.floor(s)); var m = Math.floor(s / 60), r = s % 60; return (m < 10 ? '0' : '') + m + ':' + (r < 10 ? '0' : '') + r; }
+
+  var store = {
+    get: function (k, d) { try { var v = localStorage.getItem('atempo:' + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
+    set: function (k, v) { try { localStorage.setItem('atempo:' + k, JSON.stringify(v)); } catch (e) { /* armazenamento indisponível */ } }
+  };
+
+  var now = Date.now(), H = 3600e3;
+  var state = {
+    nome: store.get('nome', 'Viviane'),
+    favs: store.get('favs', ['constitucional/direitos-fundamentais', 'penal/teoria-do-crime']),
+    studied: store.get('studied', []),
+    hist: store.get('hist', [
+      { d: 'empresarial', t: 'teoria-da-empresa', f: 'pdf', ts: now - 2 * H },
+      { d: 'constitucional', t: 'direitos-fundamentais', f: 'podcast', ts: now - 26 * H },
+      { d: 'penal', t: 'teoria-do-crime', f: 'mapa', ts: now - 50 * H },
+      { d: 'civil', t: 'contratos', f: 'video', ts: now - 74 * H }
+    ]),
+    prefs: store.get('prefs', { notif: true, lembrete: true, autoplay: false, offline: false, meta: '10' }),
+    best: store.get('best', {})
+  };
+  function save(k) { store.set(k, state[k]); }
+
+  var ui = { tab: 0, answers: {}, sel: {}, pdf: { key: '', page: 1, zoom: 100 }, sim: null, mm: null, lmenu: false };
+
+  function disc(id) { return D.disciplinas.filter(function (d) { return d.id === id; })[0]; }
+  function topic(d, id) { return d && d.topicos.filter(function (t) { return t.id === id; })[0]; }
+  function fmt(id) { return FORMATS.filter(function (f) { return f.id === id; })[0]; }
+  function progress() { return Math.min(100, 68 + state.studied.length * 2); }
+  function discProgress(d) {
+    var n = state.studied.filter(function (k) { return k.indexOf(d.id + '/') === 0; }).length;
+    return Math.min(100, d.progresso + n * 4);
+  }
+  function isFav(d, t) { return state.favs.indexOf(d.id + '/' + t.id) > -1; }
+  function isStudied(d, t) { return state.studied.indexOf(d.id + '/' + t.id) > -1; }
+  function initial() { return (state.nome.trim()[0] || 'V').toUpperCase(); }
+
+  /* conteúdo de um tópico (específico ou gerado) */
+  function content(d, t) {
+    var sp = D.especifico[d.id + '/' + t.id];
+    if (sp) return sp;
+    var nome = t.nome, area = d.nome;
+    var outras = D.disciplinas.filter(function (x) { return x.id !== d.id; }).slice(0, 3).map(function (x) { return x.lei; });
+    var opts = [d.lei].concat(outras);
+    return {
+      resumo: [
+        t.desc,
+        nome + ' tem como base normativa principal: ' + d.lei + '.',
+        'Dominar ' + nome.toLowerCase() + ' exige unir texto legal, doutrina e jurisprudência dos tribunais superiores.'
+      ],
+      pages: [
+        [{ h: 'Conceito', p: t.desc }, { h: 'Pontos-chave', li: ['Conceito e natureza jurídica', 'Características principais', 'Fundamento legal', 'Aplicação prática'] }],
+        [{ h: 'Fundamento legal', p: 'O tema é disciplinado principalmente por: ' + d.lei + '. A leitura atenta dos dispositivos é o primeiro passo para compreender o assunto.' }],
+        [{ h: 'Características', p: 'O estudo de ' + nome.toLowerCase() + ' envolve a identificação de seus elementos essenciais e das relações com outros institutos de ' + area + '.' }],
+        [{ h: 'Visão da doutrina', p: 'A doutrina sistematiza os conceitos, organiza classificações e aponta divergências relevantes para a interpretação do tema.' }],
+        [{ h: 'Jurisprudência', p: 'Os entendimentos do STF e do STJ orientam a aplicação prática do tema e são frequentemente cobrados em provas.' }],
+        [{ h: 'Aplicação prática', p: 'Em casos concretos, identifique os fatos relevantes, enquadre-os nas normas aplicáveis e verifique as consequências jurídicas.' }],
+        [{ h: 'Pontos de atenção', li: ['Leia a literalidade da lei', 'Observe exceções e prazos', 'Relacione com súmulas e precedentes'] }],
+        [{ h: 'Síntese', p: 'Revise o resumo ao lado e resolva as questões para fixar o conteúdo de ' + nome + '.' }]
+      ],
+      refs: [d.lei, 'Constituição Federal de 1988', 'Jurisprudência do STF e do STJ', 'Doutrina de referência em ' + area],
+      questoes: [{ q: 'Qual é a principal base normativa para o estudo de "' + nome + '"?', opts: opts, a: 0, exp: 'O tema é disciplinado principalmente por: ' + d.lei + '.' }],
+      mapa: {
+        centro: nome,
+        ramos: [
+          { n: 'Conceito', d: t.desc, c: ['Definição', 'Natureza'] },
+          { n: 'Fundamento', d: 'Base normativa: ' + d.lei + '.', c: ['Lei', 'Princípios'] },
+          { n: 'Características', d: 'Elementos essenciais que identificam o instituto.', c: ['Elementos', 'Requisitos'] },
+          { n: 'Jurisprudência', d: 'Entendimentos consolidados nos tribunais superiores.', c: ['STF', 'STJ'] },
+          { n: 'Prática', d: 'Aplicação do tema em casos concretos e em provas.', c: ['Casos', 'Provas'] }
+        ]
+      }
+    };
+  }
+
+  /* ---------- toast & modais ---------- */
+  var toastTimer;
+  function toast(msg) {
+    toastEl.innerHTML = ic('check') + '<span>' + esc(msg) + '</span>';
+    toastEl.classList.add('is-on');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { toastEl.classList.remove('is-on'); }, 2600);
+  }
+  function openModal(html, cls) {
+    modalRoot.innerHTML = '<div class="modal ' + (cls || '') + '" role="dialog" aria-modal="true"><div class="modal__bg" data-action="close-modal"></div><div class="modal__card">' +
+      '<button class="modal__x" data-action="close-modal" aria-label="Fechar">' + ic('x') + '</button>' + html + '</div></div>';
+    document.body.classList.add('no-scroll');
+    var f = modalRoot.querySelector('[autofocus]');
+    if (f) setTimeout(function () { f.focus(); }, 60);
+  }
+  function closeModal() { modalRoot.innerHTML = ''; document.body.classList.remove('no-scroll'); }
+
+  function logo(variant) {
+    return '<a href="#/" class="logo logo--' + variant + '" aria-label="ATEMPO — início">' + ic('scale', 'logo__ic', 1.5) +
+      '<span class="logo__txt"><b>ATEMPO</b><small>Aprenda no seu tempo</small></span></a>';
+  }
+
+  /* ---------- busca ---------- */
+  function searchResults(q) {
+    q = norm(q.trim());
+    if (!q) return null;
+    var out = [];
+    D.disciplinas.forEach(function (d) {
+      if (norm(d.nome).indexOf(q) > -1) out.push({ href: '#/disciplina/' + d.id, t: d.nome, m: 'Disciplina', icon: d.icon });
+      d.topicos.forEach(function (t) {
+        if (norm(t.nome).indexOf(q) > -1) out.push({ href: '#/disciplina/' + d.id + '/' + t.id, t: t.nome, m: d.nome, icon: 'filetext' });
+      });
+    });
+    FORMATS.forEach(function (f) {
+      if (norm(f.nome).indexOf(q) > -1) out.push({ href: '#/estudo/empresarial/teoria-da-empresa/' + f.id, t: f.nome + ' — Teoria da Empresa', m: 'Material · ' + f.dur, icon: f.icon });
+    });
+    return out.slice(0, 8);
+  }
+  function searchHTML(q) {
+    var r = searchResults(q);
+    if (!r) return '';
+    if (!r.length) return '<p class="sres__empty">Nenhum resultado para “' + esc(q) + '”.</p>';
+    return map(r, function (x) {
+      return '<a class="sres__item" href="' + x.href + '">' + '<span class="sres__ic">' + ic(x.icon) + '</span><span><b>' + esc(x.t) + '</b><small>' + esc(x.m) + '</small></span>' + ic('chevronRight', 'sres__go') + '</a>';
+    });
+  }
+  function searchBox(id) {
+    return '<div class="search" data-search-wrap><input id="' + id + '" data-search type="search" autocomplete="off" placeholder="Busque por disciplina, assunto ou material..." aria-label="Buscar">' +
+      '<span class="search__ic">' + ic('search') + '</span><div class="search__res"></div></div>';
+  }
+
+  /* ================= LANDING ================= */
+  function viewLanding() {
+    var fc = map(FORMATS, function (f) {
+      return '<button class="fcard" data-action="open-login"><span class="fcard__ic">' + ic(f.icon, '', 1.7) + '</span>' +
+        '<span class="fcard__txt"><b>' + (f.nomeLp || f.nome) + '</b><small>' + f.l1 + '<br>' + f.l2 + '</small></span></button>';
+    });
+    var dc = map(D.disciplinas, function (d) {
+      return '<button class="dcard" data-action="open-login">' + ic(d.icon, '', 1.4) + '<span>' + d.l1 + '<br>' + d.l2 + '</span></button>';
+    });
+    return '' +
+'<div class="landing">' +
+  '<header class="lhead">' +
+    logo('dark') +
+    '<nav class="lnav' + (ui.lmenu ? ' is-open' : '') + '" aria-label="Seções">' +
+      '<button data-action="scroll" data-target="inicio" class="is-active">Início</button>' +
+      '<button data-action="scroll" data-target="disciplinas">Disciplinas</button>' +
+      '<button data-action="scroll" data-target="planos">Planos</button>' +
+      '<button data-action="scroll" data-target="sobre">Sobre nós</button>' +
+    '</nav>' +
+    '<div class="lhead__r">' +
+      '<button class="iconbtn" data-action="open-search" aria-label="Buscar">' + ic('search', '', 2) + '</button>' +
+      '<button class="btn btn--navy btn--xs" data-action="open-login">Entrar</button>' +
+      '<button class="iconbtn lburger" data-action="toggle-lmenu" aria-label="Abrir menu">' + ic(ui.lmenu ? 'x' : 'menu') + '</button>' +
+    '</div>' +
+  '</header>' +
+  '<section class="hero" id="inicio">' +
+    '<div class="hero__in">' +
+      '<div class="hero__text">' +
+        '<p class="hero__kicker">Uma nova forma de aprender</p>' +
+        '<h1 class="hero__title"><span class="hero__big">Direito.</span><span class="hero__sub">Aprenda no seu tempo.</span></h1>' +
+        '<p class="hero__desc">Conteúdos jurídicos organizados, objetivos e em diferentes formatos, para você estudar de forma prática e eficiente.</p>' +
+        '<button class="btn btn--yellow btn--lg" data-action="open-login">Começar a estudar ' + ic('arrowRight', '', 2) + '</button>' +
+      '</div>' +
+      '<div class="hero__art">' + ART.hero() + '</div>' +
+    '</div>' +
+  '</section>' +
+  '<div class="fcards-wrap"><span class="hero__corner" aria-hidden="true"></span><div class="fcards">' + fc + '</div></div>' +
+
+  '<section class="lsec" id="disciplinas"><div class="lsec__in">' +
+    '<p class="kicker">Disciplinas</p><h2 class="lsec__title">Tudo o que você precisa, organizado por matéria</h2>' +
+    '<p class="lsec__sub">Escolha a disciplina, o assunto e o formato que combina com o seu momento.</p>' +
+    '<div class="dgrid dgrid--lp">' + dc + '</div>' +
+  '</div></section>' +
+
+  '<section class="lsec lsec--alt" id="planos"><div class="lsec__in">' +
+    '<p class="kicker">Planos</p><h2 class="lsec__title">Comece grátis, evolua no seu ritmo</h2>' +
+    '<div class="plans">' +
+      plan('Essencial', 'Grátis', '', ['Resumos em PDF', '1 disciplina por vez', 'Histórico de estudos'], false) +
+      plan('Estudante', 'R$ 19,90', '/mês', ['Todos os formatos', 'Todas as disciplinas', 'Simulados ilimitados', 'Acesso offline'], true) +
+      plan('Aprovação', 'R$ 39,90', '/mês', ['Tudo do Estudante', 'Mentoria mensal', 'Correção de peças', 'Plano de estudos personalizado'], false) +
+    '</div>' +
+  '</div></section>' +
+
+  '<section class="lsec" id="sobre"><div class="lsec__in about">' +
+    '<div><p class="kicker">Sobre nós</p><h2 class="lsec__title">Aprender Direito pode ser leve</h2>' +
+      '<p class="lsec__sub">O ATEMPO nasceu para quem estuda entre o trabalho, o estágio e a vida. Transformamos conteúdos jurídicos densos em materiais objetivos — para ler, ouvir, visualizar ou assistir.</p>' +
+      '<div class="about__devices">' + ic('devices', '', 1.6) + '<span>Acesse de onde estiver, pelo celular, tablet ou computador.</span></div>' +
+    '</div>' +
+    '<div class="stats">' +
+      stat('6', 'disciplinas') + stat('30+', 'assuntos') + stat('4', 'formatos de estudo') + stat('24h', 'disponível') +
+    '</div>' +
+  '</div></section>' +
+
+  '<footer class="lfoot"><div class="lfoot__in">' + logo('light') + '<p>© 2026 ATEMPO · Projeto acadêmico — interface demonstrativa.</p></div></footer>' +
+'</div>';
+  }
+  function plan(n, p, per, items, hl) {
+    return '<div class="plan' + (hl ? ' is-hl' : '') + '">' + (hl ? '<span class="plan__tag">Mais escolhido</span>' : '') +
+      '<h3>' + n + '</h3><p class="plan__price"><b>' + p + '</b>' + per + '</p><ul>' + map(items, function (i) { return '<li>' + ic('check', '', 2.2) + i + '</li>'; }) + '</ul>' +
+      '<button class="btn ' + (hl ? 'btn--yellow' : 'btn--navy') + ' btn--block" data-action="open-login">Começar agora</button></div>';
+  }
+  function stat(n, l) { return '<div class="stat"><b>' + n + '</b><span>' + l + '</span></div>'; }
+
+  function loginHTML() {
+    return '<div class="login">' + logo('dark') +
+      '<h2>Bem-vinda de volta!</h2><p class="muted">Entre para continuar seus estudos.</p>' +
+      '<form data-form="login" novalidate>' +
+        '<label class="field"><span>E-mail</span><span class="field__in">' + ic('mail') + '<input type="email" value="viviane@atempo.app" autocomplete="off"></span></label>' +
+        '<label class="field"><span>Senha</span><span class="field__in">' + ic('lock') + '<input type="password" value="atempo" autocomplete="off"></span></label>' +
+        '<div class="row-between"><label class="chk"><input type="checkbox" checked> Lembrar de mim</label><button type="button" class="link" data-action="toast" data-msg="Enviamos um link de recuperação para o seu e-mail.">Esqueci a senha</button></div>' +
+        '<button class="btn btn--navy btn--block btn--lg" type="submit">Entrar ' + ic('arrowRight', '', 2) + '</button>' +
+      '</form>' +
+      '<p class="login__foot">Não tem conta? <button class="link" data-action="toast" data-msg="Cadastro disponível em breve!">Cadastre-se</button></p></div>';
+  }
+
+  /* ================= SHELL (área logada) ================= */
+  var NAV = [
+    { id: 'inicio', href: '/app', icon: 'home', label: 'Início' },
+    { id: 'materias', href: '/materias', icon: 'book', label: 'Minhas Matérias' },
+    { id: 'favoritos', href: '/favoritos', icon: 'star', label: 'Favoritos' },
+    { id: 'historico', href: '/historico', icon: 'history', label: 'Histórico' },
+    { id: 'simulados', href: '/simulados', icon: 'edit', label: 'Simulados' },
+    { id: 'configuracoes', href: '/configuracoes', icon: 'settings', label: 'Configurações' }
+  ];
+  var BNAV = [
+    { id: 'inicio', href: '/app', icon: 'home', label: 'Início' },
+    { id: 'materias', href: '/materias', icon: 'book', label: 'Minhas Matérias' },
+    { id: 'favoritos', href: '/favoritos', icon: 'star', label: 'Favoritos' },
+    { id: 'perfil', href: '/perfil', icon: 'user', label: 'Perfil' }
+  ];
+
+  function shell(active, inner, opts) {
+    opts = opts || {};
+    var p = progress();
+    var bActive = active === 'historico' || active === 'simulados' || active === 'configuracoes' ? 'perfil' : (opts.bnav || active);
+    return '' +
+'<div class="shell" id="shell">' +
+  '<aside class="sidebar" id="sidebar" aria-label="Menu principal">' +
+    '<div class="sidebar__logo' + (opts.stack ? ' is-stack' : '') + '">' + logo('light') +
+      '<button class="iconbtn sidebar__close" data-action="close-drawer" aria-label="Fechar menu">' + ic('x') + '</button></div>' +
+    '<nav class="snav">' + map(NAV, function (n) {
+      return '<a href="#' + n.href + '" class="snav__item' + (active === n.id ? ' is-active' : '') + '" title="' + n.label + '">' + ic(n.icon) + '<span>' + n.label + '</span></a>';
+    }) + '</nav>' +
+    '<div class="sprog"><div class="sprog__top"><span>Seu progresso</span>' + ic('sparkle', 'sprog__spark') + '</div>' +
+      '<div class="sprog__row"><div class="bar"><i style="width:' + p + '%"></i></div><b>' + p + '%</b></div></div>' +
+  '</aside>' +
+  '<div class="scrim" data-action="close-drawer"></div>' +
+  '<div class="main">' +
+    '<header class="mtop">' +
+      '<button class="iconbtn" data-action="open-drawer" aria-label="Abrir menu">' + ic('menu', '', 2) + '</button>' +
+      logo('dark') +
+      '<button class="iconbtn bellbtn" data-action="notif" aria-label="Notificações">' + ic('bell') + '<i class="dot"></i></button>' +
+    '</header>' +
+    '<main class="content' + (opts.wide ? ' content--wide' : '') + '" id="content">' + inner + '</main>' +
+  '</div>' +
+  '<nav class="bnav" aria-label="Navegação inferior">' + map(BNAV, function (n) {
+    return '<a href="#' + n.href + '" class="bnav__item' + (bActive === n.id ? ' is-active' : '') + '">' + ic(n.icon) + '<span>' + n.label + '</span></a>';
+  }) + '</nav>' +
+'</div>';
+  }
+
+  /* ================= DASHBOARD ================= */
+  function ring(p, size) {
+    var r = 16, c = 2 * Math.PI * r;
+    return '<svg class="ring" viewBox="0 0 40 40" width="' + size + '" height="' + size + '" aria-hidden="true"><circle cx="20" cy="20" r="' + r + '" fill="none" stroke="#d6ebe8" stroke-width="5"/>' +
+      '<circle cx="20" cy="20" r="' + r + '" fill="none" stroke="#17958f" stroke-width="5" stroke-linecap="round" stroke-dasharray="' + (c * p / 100).toFixed(1) + ' ' + c.toFixed(1) + '" transform="rotate(-90 20 20)"/></svg>';
+  }
+
+  function viewDashboard() {
+    var p = progress();
+    var dcards = map(D.disciplinas, function (d) {
+      return '<a class="dcard" href="#/disciplina/' + d.id + '">' + ic(d.icon, '', 1.4) + '<span>' + d.l1 + '<br>' + d.l2 + '</span></a>';
+    });
+    var recent = [
+      { href: '#/estudo/constitucional/teoria-da-constituicao/pdf', icon: 'pdf', t: 'Resumo - Direito Constitucional', m: 'PDF • 12 min' },
+      { href: '#/estudo/constitucional/direitos-fundamentais/podcast', icon: 'headphones', t: 'Podcast - Direitos Fundamentais', m: 'Áudio • 15 min' }
+    ];
+    var inner = '' +
+'<div class="dash">' +
+  '<div class="dash__head">' +
+    '<div class="dash__greet">' +
+      '<h1>Olá, ' + esc(state.nome) + '!</h1>' +
+      '<p>Que bom te ver por aqui. Vamos continuar seus estudos?</p>' +
+      searchBox('q-dash') +
+    '</div>' +
+    '<div class="dash__side">' +
+      '<div class="topicons">' +
+        '<button class="iconbtn bellbtn" data-action="notif" aria-label="Notificações">' + ic('bell') + '<i class="dot"></i></button>' +
+        '<button class="avatar" data-action="usermenu" aria-label="Menu do usuário">' + initial() + '</button>' +
+      '</div>' +
+      '<a class="progcard" href="#/materias">' +
+        '<div class="progcard__l"><small>Seu progresso</small><strong>' + p + '<span>%</span></strong><div class="bar bar--light"><i style="width:' + p + '%"></i></div></div>' +
+        ring(p, 52) +
+      '</a>' +
+    '</div>' +
+  '</div>' +
+  '<section><div class="sec-head"><h2>Suas disciplinas</h2><a class="link-more" href="#/materias">Ver todas ' + ic('arrowRight') + '</a></div>' +
+    '<div class="dgrid">' + dcards + '</div></section>' +
+  '<div class="dash__row">' +
+    '<section><div class="sec-head"><h2>Continue estudando</h2></div>' +
+      '<div class="ccard"><a class="ccard__img" href="#/estudo/empresarial/teoria-da-empresa/pdf" aria-label="Abrir Teoria da Empresa">' + ART.building() + '</a>' +
+        '<div class="ccard__body"><h3>Direito Empresarial</h3><p>Teoria da Empresa · 2h de estudo</p>' +
+          '<div class="bar bar--light ccard__bar"><i style="width:' + discProgress(disc('empresarial')) + '%"></i></div></div>' +
+        '<a class="btn btn--navy btn--sm" href="#/estudo/empresarial/teoria-da-empresa/pdf">Continuar ' + ic('arrowRight', '', 2) + '</a></div>' +
+    '</section>' +
+    '<section><div class="sec-head"><h2>Materiais recentes</h2></div>' +
+      '<div class="rlist">' + map(recent, function (r) {
+        return '<a class="ritem" href="' + r.href + '"><span class="ritem__ic">' + ic(r.icon, '', 1.6) + '</span><span><span class="ritem__t">' + r.t + '</span><span class="ritem__m">' + r.m + '</span></span></a>';
+      }) + '</div>' +
+    '</section>' +
+  '</div>' +
+'</div>';
+    return shell('inicio', inner, { stack: true });
+  }
+
+  /* ================= ASSUNTOS ================= */
+  function viewTopics(d) {
+    var sel = topic(d, ui.sel[d.id]) || d.topicos[0];
+    var inner = '' +
+'<a class="back" href="#/app">' + ic('arrowLeft') + ' Voltar</a>' +
+'<div class="topics">' +
+  '<div>' +
+    '<h1 class="page-title">' + d.nome + '</h1>' +
+    '<p class="page-sub">Escolha o assunto que deseja estudar:</p>' +
+    '<div class="tlist" role="listbox" aria-label="Assuntos">' + map(d.topicos, function (t) {
+      var on = t.id === sel.id;
+      return '<button class="titem' + (on ? ' is-active' : '') + '" role="option" aria-selected="' + on + '" data-action="select-topic" data-d="' + d.id + '" data-t="' + t.id + '">' +
+        '<span class="titem__l">' + ic('diamond', 'titem__dot', 2) + '<span>' + t.nome + '</span>' + (isStudied(d, t) ? '<em class="tag">Estudado</em>' : '') + '</span>' + ic('chevronRight') + '</button>';
+    }) + '</div>' +
+  '</div>' +
+  '<aside class="tdetail" id="tdetail">' +
+    ic('landmark', 'tdetail__ic', 1.3) +
+    '<h2>' + sel.nome + '</h2>' +
+    '<p>' + sel.desc + '</p>' +
+    '<a class="btn btn--navy" href="#/disciplina/' + d.id + '/' + sel.id + '">Ver formatos de estudo ' + ic('arrowRight', '', 2) + '</a>' +
+  '</aside>' +
+'</div>';
+    return shell('', inner, { bnav: 'materias' });
+  }
+
+  /* ================= FORMATOS ================= */
+  function viewFormats(d, t) {
+    var last = store.get('lastFmt', 'pdf');
+    var inner = '' +
+'<a class="back" href="#/disciplina/' + d.id + '">' + ic('arrowLeft') + ' Voltar</a>' +
+'<nav class="crumbs" aria-label="Caminho"><a href="#/disciplina/' + d.id + '">' + d.nome + '</a>' + ic('chevronRight') + '<span>' + t.nome + '</span></nav>' +
+'<h1 class="page-title fmt-title">Escolha o formato ideal para você:</h1>' +
+'<div class="fmt-grid">' + map(FORMATS, function (f) {
+  return '<a class="fmt' + (f.id === last ? ' is-active' : '') + '" href="#/estudo/' + d.id + '/' + t.id + '/' + f.id + '">' +
+    (f.id === last ? '<span class="fmt__badge" title="Último formato usado">' + ic('check', '', 2.4) + '</span>' : '') +
+    ic(f.iconFmt || f.icon, 'fmt__ic', 1.5) + '<h3>' + f.nome + '</h3><p>' + f.l1 + '<br>' + f.l2.replace(/$/, '.') + '</p><span class="btn btn--white">Selecionar</span></a>';
+}) + '</div>';
+    return shell('', inner, { bnav: 'materias' });
+  }
+
+  /* ================= ÁREA DE ESTUDO ================= */
+  var player = { key: '', t: 0, dur: 900, playing: false, speed: 1, timer: null, kind: '' };
+  function stopPlayer() { player.playing = false; clearInterval(player.timer); player.timer = null; }
+
+  function viewStudy(d, t, f) {
+    var c = content(d, t);
+    var key = d.id + '/' + t.id;
+    if (ui.pdf.key !== key) { ui.pdf = { key: key, page: 1, zoom: 100 }; ui.tab = 0; ui.mm = null; }
+    store.set('lastFmt', f.id);
+    addHist(d, t, f);
+    var fav = isFav(d, t), studied = isStudied(d, t);
+    var main;
+    if (f.id === 'pdf') main = pdfViewer(c, d, t);
+    else if (f.id === 'podcast') main = podcastView(c, d, t, f);
+    else if (f.id === 'video') main = videoView(c, d, t, f);
+    else main = mindmapView(c, d, t);
+
+    var inner = '' +
+'<div class="study-top">' +
+  '<nav class="crumbs crumbs--study" aria-label="Caminho">' +
+    '<a class="crumbs__back" href="#/disciplina/' + d.id + '/' + t.id + '" aria-label="Voltar">' + ic('arrowLeft') + '</a>' +
+    '<a href="#/materias">' + d.l1 + '</a>' + ic('chevronRight') + '<a href="#/disciplina/' + d.id + '">' + d.abrev + '</a>' + ic('chevronRight') +
+    '<a href="#/disciplina/' + d.id + '/' + t.id + '">' + t.nome + '</a>' + ic('chevronRight') + '<span>' + f.nome + '</span>' +
+  '</nav>' +
+  '<button class="iconbtn bm' + (fav ? ' is-on' : '') + '" data-action="fav" data-d="' + d.id + '" data-t="' + t.id + '" aria-label="' + (fav ? 'Remover dos favoritos' : 'Favoritar') + '">' + ic(fav ? 'bookmarkFill' : 'bookmark') + '</button>' +
+'</div>' +
+'<div class="study">' +
+  '<div class="study__main">' + main + '</div>' +
+  '<div class="study__side">' +
+    panel(c, d, t) +
+    '<div class="actions">' +
+      '<button class="abtn' + (studied ? ' is-on' : '') + '" data-action="studied" data-d="' + d.id + '" data-t="' + t.id + '"><span class="abtn__chk">' + ic('check', '', 2.6) + '</span>' + (studied ? 'Estudado' : 'Marcar como estudado') + '</button>' +
+      '<button class="abtn' + (fav ? ' is-fav' : '') + '" data-action="fav" data-d="' + d.id + '" data-t="' + t.id + '">' + ic(fav ? 'bookmarkFill' : 'bookmark', 'abtn__bm') + (fav ? 'Favoritado' : 'Favoritar') + '</button>' +
+    '</div>' +
+  '</div>' +
+'</div>';
+    return shell('', inner, { bnav: 'materias', wide: true });
+  }
+
+  function pdfViewer(c, d, t) {
+    var pg = c.pages[ui.pdf.page - 1], n = 0;
+    for (var i = 0; i < ui.pdf.page - 1; i++) n += c.pages[i].length;
+    var body = map(pg, function (s, i) {
+      return '<h4>' + (n + i + 1) + '. ' + s.h + '</h4>' + (s.p ? '<p>' + s.p + '</p>' : '') + (s.li ? '<ul>' + map(s.li, function (x) { return '<li>' + x + '</li>'; }) + '</ul>' : '');
+    });
+    return '' +
+'<div class="viewer">' +
+  '<div class="vbar">' +
+    '<div class="vbar__l"><a class="vlink" href="#/disciplina/' + d.id + '/' + t.id + '">' + ic('chevronLeft') + '<span>Voltar</span></a><button class="vbtn hide-sm" data-action="toast" data-msg="Sumário: 8 páginas · ' + esc(t.nome) + '" aria-label="Sumário">' + ic('more') + '</button></div>' +
+    '<div class="vbar__c">' +
+      '<button class="vbtn" data-action="pdf-prev" aria-label="Página anterior"' + (ui.pdf.page <= 1 ? ' disabled' : '') + '>' + ic('chevronLeft') + '</button>' +
+      '<span class="vnum">' + ui.pdf.page + ' / ' + c.pages.length + '</span>' +
+      '<button class="vbtn" data-action="pdf-next" aria-label="Próxima página"' + (ui.pdf.page >= c.pages.length ? ' disabled' : '') + '>' + ic('chevronRight') + '</button>' +
+      '<span class="vsep"></span>' +
+      '<button class="vbtn" data-action="zoom" data-z="-10" aria-label="Diminuir zoom">' + ic('minus') + '</button>' +
+      '<span class="vnum">' + ui.pdf.zoom + '%</span>' +
+      '<button class="vbtn" data-action="zoom" data-z="10" aria-label="Aumentar zoom">' + ic('plus') + '</button>' +
+      '<button class="vbtn hide-sm" data-action="zoom" data-z="0" aria-label="Ajustar">' + ic('target') + '</button>' +
+    '</div>' +
+    '<div class="vbar__r"><button class="vbtn" data-action="toast" data-msg="Download do PDF iniciado (demonstração)." aria-label="Baixar">' + ic('download') + '</button>' +
+      '<button class="vbtn hide-sm" data-action="toast" data-msg="Enviado para impressão (demonstração)." aria-label="Imprimir">' + ic('printer') + '</button>' +
+      '<button class="vbtn hide-sm" data-action="fullscreen" data-el=".viewer" aria-label="Tela cheia">' + ic('maximize') + '</button></div>' +
+  '</div>' +
+  '<div class="vstage" data-swipe="pdf">' +
+    '<article class="vpage" style="--z:' + (ui.pdf.zoom / 100) + '">' +
+      '<div class="vpage__body">' +
+        (ui.pdf.page === 1 ? '<h2>' + t.nome + '</h2><p class="vpage__sub">' + d.nome + '</p>' : '<p class="vpage__run">' + t.nome + ' · ' + d.nome + '</p>') +
+        body +
+      '</div>' +
+      '<span class="vpage__num">' + ui.pdf.page + '</span>' +
+    '</article>' +
+  '</div>' +
+'</div>';
+  }
+
+  function panel(c, d, t) {
+    var tabs = ['Resumo', 'Referências', 'Questões'];
+    var body;
+    if (ui.tab === 0) {
+      body = '<h3>Resumo</h3><ul class="blist">' + map(c.resumo, function (r) { return '<li>' + r + '</li>'; }) + '</ul>';
+    } else if (ui.tab === 1) {
+      body = '<h3>Referências</h3><ul class="rflist">' + map(c.refs, function (r) { return '<li>' + ic('book', '', 1.6) + '<span>' + r + '</span></li>'; }) + '</ul>';
+    } else {
+      body = '<h3>Questões</h3>' + map(c.questoes, function (q, qi) {
+        var k = d.id + '/' + t.id + '/' + qi, ans = ui.answers[k];
+        return '<div class="q"><p class="q__t"><b>' + (qi + 1) + '.</b> ' + q.q + '</p>' + map(q.opts, function (o, oi) {
+          var cls = ans === undefined ? '' : (oi === q.a ? ' ok' : (oi === ans ? ' bad' : ' dim'));
+          return '<button class="opt' + cls + '" data-action="answer" data-k="' + k + '" data-o="' + oi + '"' + (ans !== undefined ? ' disabled' : '') + '><span class="opt__l">' + 'ABCD'[oi] + '</span>' + o + '</button>';
+        }) + (ans !== undefined ? '<p class="q__exp ' + (ans === q.a ? 'is-ok' : 'is-bad') + '">' + (ans === q.a ? 'Correto! ' : 'Resposta correta: ' + 'ABCD'[q.a] + '. ') + q.exp + '</p>' : '') + '</div>';
+      });
+    }
+    return '<aside class="panel"><div class="tabs" role="tablist">' + map(tabs, function (n, i) {
+      return '<button class="tab' + (ui.tab === i ? ' is-active' : '') + '" role="tab" aria-selected="' + (ui.tab === i) + '" data-action="tab" data-i="' + i + '">' + n + '</button>';
+    }) + '</div><div class="panel__body">' + body + '</div></aside>';
+  }
+
+  function chaptersFor(c, dur) {
+    var hs = ['Introdução'];
+    c.pages.forEach(function (pg) { pg.forEach(function (s) { if (hs.length < 6 && hs.indexOf(s.h) < 0) hs.push(s.h); }); });
+    return hs.map(function (h, i) { return { h: h, t: Math.round(dur * i / hs.length) }; });
+  }
+  function setupPlayer(kind, key, dur) {
+    if (player.key !== key + kind) { stopPlayer(); player.key = key + kind; player.t = 0; player.dur = dur; player.speed = 1; player.kind = kind; }
+  }
+
+  function podcastView(c, d, t, f) {
+    setupPlayer('podcast', d.id + '/' + t.id, 15 * 60);
+    var ch = chaptersFor(c, player.dur);
+    var bars = '';
+    for (var i = 0; i < 28; i++) bars += '<i style="--h:' + (20 + Math.round(Math.abs(Math.sin(i * 1.7)) * 70)) + '%;--d:' + (i % 7) * 0.09 + 's"></i>';
+    return '' +
+'<div class="player' + (player.playing ? ' is-playing' : '') + '" id="player">' +
+  '<div class="player__top">' +
+    '<div class="player__cover">' + ic('headphones', '', 1.4) + '<div class="wave">' + bars + '</div><span>ATEMPO Podcast</span></div>' +
+    '<div class="player__info">' +
+      '<small>Podcast · ' + d.nome + '</small>' +
+      '<h2>' + t.nome + '</h2>' +
+      '<p>' + t.desc + '</p>' +
+      '<div class="ptrack" data-action="seek" role="slider" aria-label="Progresso do áudio" aria-valuemin="0" aria-valuemax="' + player.dur + '" aria-valuenow="' + Math.floor(player.t) + '"><i id="p-fill" style="width:' + (player.t / player.dur * 100) + '%"></i></div>' +
+      '<div class="ptimes"><span id="p-cur">' + fmtTime(player.t) + '</span><span>' + fmtTime(player.dur) + '</span></div>' +
+      '<div class="pctrl">' +
+        '<button class="pbtn" data-action="skip" data-s="-15" aria-label="Voltar 15 segundos">' + ic('back15', '', 1.7) + '</button>' +
+        '<button class="pbtn pbtn--main" data-action="play" aria-label="Reproduzir ou pausar" id="p-play">' + ic(player.playing ? 'pause' : 'play') + '</button>' +
+        '<button class="pbtn" data-action="skip" data-s="15" aria-label="Avançar 15 segundos">' + ic('fwd15', '', 1.7) + '</button>' +
+        '<button class="pspeed" data-action="speed" id="p-speed">' + player.speed + 'x</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>' +
+  '<div class="chapters"><h3>Capítulos</h3>' + map(ch, function (x, i) {
+    return '<button class="chap" data-action="seekto" data-s="' + x.t + '"><span class="chap__n">' + (i + 1) + '</span><span class="chap__t">' + x.h + '</span><span class="chap__time">' + fmtTime(x.t) + '</span></button>';
+  }) + '</div>' +
+'</div>';
+  }
+
+  function videoSlide(c, t) {
+    var ch = chaptersFor(c, player.dur), idx = 0;
+    ch.forEach(function (x, i) { if (player.t >= x.t) idx = i; });
+    var pts = c.resumo.slice(0, 1 + (idx % 3));
+    return '<small>' + (idx + 1) + ' / ' + ch.length + ' · ' + ch[idx].h + '</small><h3>' + (idx === 0 ? t.nome : ch[idx].h) + '</h3><ul>' + map(pts, function (p) { return '<li>' + p + '</li>'; }) + '</ul>';
+  }
+  function videoView(c, d, t) {
+    setupPlayer('video', d.id + '/' + t.id, 18 * 60);
+    var ch = chaptersFor(c, player.dur);
+    return '' +
+'<div class="vid' + (player.playing ? ' is-playing' : '') + '" id="player">' +
+  '<div class="vid__screen">' +
+    '<div class="vid__slide" id="v-slide">' + videoSlide(c, t) + '</div>' +
+    '<div class="vid__prof" aria-hidden="true"><span>' + ic('user', '', 1.5) + '</span><b>Prof.ª Helena Martins</b></div>' +
+    '<button class="vid__big" data-action="play" aria-label="Reproduzir">' + ic('play') + '</button>' +
+    '<div class="vid__bar">' +
+      '<button class="vbtn" data-action="play" id="p-play" aria-label="Reproduzir ou pausar">' + ic(player.playing ? 'pause' : 'play') + '</button>' +
+      '<span class="vid__time"><span id="p-cur">' + fmtTime(player.t) + '</span> / ' + fmtTime(player.dur) + '</span>' +
+      '<div class="ptrack ptrack--dark" data-action="seek"><i id="p-fill" style="width:' + (player.t / player.dur * 100) + '%"></i></div>' +
+      '<button class="pspeed pspeed--dark" data-action="speed" id="p-speed">' + player.speed + 'x</button>' +
+      '<button class="vbtn" data-action="toast" data-msg="Legendas ativadas (demonstração)." aria-label="Volume">' + ic('volume') + '</button>' +
+      '<button class="vbtn" data-action="fullscreen" data-el=".vid__screen" aria-label="Tela cheia">' + ic('maximize') + '</button>' +
+    '</div>' +
+  '</div>' +
+  '<div class="vid__meta"><small>Videoaula · ' + d.nome + '</small><h2>' + t.nome + '</h2></div>' +
+  '<div class="chapters"><h3>Capítulos</h3>' + map(ch, function (x, i) {
+    return '<button class="chap" data-action="seekto" data-s="' + x.t + '"><span class="chap__n">' + (i + 1) + '</span><span class="chap__t">' + x.h + '</span><span class="chap__time">' + fmtTime(x.t) + '</span></button>';
+  }) + '</div>' +
+'</div>';
+  }
+
+  function mindmapView(c) {
+    var m = c.mapa, W = 820, Hh = 540, cx = W / 2, cy = Hh / 2, n = m.ramos.length;
+    var lines = '', nodes = '';
+    function box(x, y, txt, cls, i, fs) {
+      var w = Math.max(70, txt.length * (fs * 0.6) + 26), h = fs * 2.5;
+      return '<g class="mm__node ' + cls + (ui.mm === i ? ' is-sel' : '') + '"' + (i !== undefined ? ' data-action="mm" data-i="' + i + '" tabindex="0" role="button"' : '') + '>' +
+        '<rect x="' + (x - w / 2) + '" y="' + (y - h / 2) + '" width="' + w + '" height="' + h + '" rx="' + h / 2 + '"/>' +
+        '<text x="' + x + '" y="' + (y + fs * 0.35) + '" text-anchor="middle" font-size="' + fs + '">' + esc(txt) + '</text></g>';
+    }
+    m.ramos.forEach(function (r, i) {
+      var a = -Math.PI / 2 + i * 2 * Math.PI / n;
+      var bx = cx + Math.cos(a) * 205, by = cy + Math.sin(a) * 150;
+      lines += '<path d="M' + cx + ' ' + cy + ' Q' + ((cx + bx) / 2) + ' ' + (cy + (by - cy) * 0.1) + ' ' + bx + ' ' + by + '" class="mm__l1"/>';
+      r.c.forEach(function (ch, j) {
+        var spread = (j - (r.c.length - 1) / 2) * 0.36;
+        var aa = a + spread;
+        var x = cx + Math.cos(aa) * 335, y = cy + Math.sin(aa) * 228;
+        x = Math.max(70, Math.min(W - 70, x)); y = Math.max(24, Math.min(Hh - 24, y));
+        lines += '<path d="M' + bx + ' ' + by + ' L' + x + ' ' + y + '" class="mm__l2"/>';
+        nodes += box(x, y, ch, 'mm__leaf', undefined, 12);
+      });
+      nodes += box(bx, by, r.n, 'mm__branch', i, 14);
+    });
+    nodes += box(cx, cy, m.centro, 'mm__center', -1, 16);
+    var sel = ui.mm !== null && ui.mm >= 0 ? m.ramos[ui.mm] : null;
+    return '' +
+'<div class="mm">' +
+  '<div class="mm__head"><div><small>Mapa mental</small><h2>' + esc(m.centro) + '</h2></div><span class="mm__hint">' + ic('info') + 'Toque nos ramos para explorar</span></div>' +
+  '<div class="mm__tree"><div class="mm__root">' + esc(m.centro) + '</div>' + map(m.ramos, function (r, i) {
+    return '<button class="mm__tb' + (ui.mm === i ? ' is-sel' : '') + '" data-action="mm" data-i="' + i + '"><b>' + esc(r.n) + '</b><span class="mm__chips">' + map(r.c, function (ch) { return '<i>' + esc(ch) + '</i>'; }) + '</span>' +
+      (ui.mm === i ? '<p>' + esc(r.d) + '</p>' : '') + '</button>';
+  }) + '</div>' +
+  '<div class="mm__scroll"><svg class="mm__svg" viewBox="0 0 ' + W + ' ' + Hh + '" role="img" aria-label="Mapa mental de ' + esc(m.centro) + '">' + lines + nodes + '</svg></div>' +
+  '<div class="mm__info' + (sel ? ' is-on' : '') + '">' + (sel ? '<b>' + esc(sel.n) + '</b><p>' + esc(sel.d) + '</p>' : '<p>Selecione um ramo do mapa para ver a explicação.</p>') + '</div>' +
+'</div>';
+  }
+
+  function addHist(d, t, f) {
+    var h0 = state.hist[0];
+    if (h0 && h0.d === d.id && h0.t === t.id && h0.f === f.id) { h0.ts = Date.now(); save('hist'); return; }
+    state.hist = state.hist.filter(function (h) { return !(h.d === d.id && h.t === t.id && h.f === f.id); });
+    state.hist.unshift({ d: d.id, t: t.id, f: f.id, ts: Date.now() });
+    state.hist = state.hist.slice(0, 15);
+    save('hist');
+  }
+
+  /* ================= PÁGINAS DO MENU ================= */
+  function pageHead(title, sub) { return '<h1 class="page-title">' + title + '</h1>' + (sub ? '<p class="page-sub">' + sub + '</p>' : ''); }
+
+  function viewMaterias() {
+    var inner = pageHead('Minhas Matérias', 'Acompanhe seu progresso em cada disciplina.') +
+      '<div class="mgrid">' + map(D.disciplinas, function (d) {
+        var p = discProgress(d), n = state.studied.filter(function (k) { return k.indexOf(d.id + '/') === 0; }).length;
+        return '<a class="mcard" href="#/disciplina/' + d.id + '"><span class="mcard__ic">' + ic(d.icon, '', 1.5) + '</span>' +
+          '<div class="mcard__b"><h3>' + d.nome + '</h3><p>' + d.topicos.length + ' assuntos · ' + n + ' estudado' + (n === 1 ? '' : 's') + '</p>' +
+          '<div class="mcard__p"><div class="bar bar--light"><i style="width:' + p + '%"></i></div><b>' + p + '%</b></div></div>' + ic('chevronRight', 'mcard__go') + '</a>';
+      }) + '</div>';
+    return shell('materias', inner);
+  }
+
+  function viewFavoritos() {
+    var items = state.favs.map(function (k) { var s = k.split('/'), d = disc(s[0]); return d && { d: d, t: topic(d, s[1]) }; }).filter(function (x) { return x && x.t; });
+    var inner = pageHead('Favoritos', 'Seus conteúdos salvos para revisar depois.') + (items.length ?
+      '<div class="list">' + map(items, function (x) {
+        return '<div class="lrow"><a class="lrow__main" href="#/disciplina/' + x.d.id + '/' + x.t.id + '"><span class="lrow__ic lrow__ic--star">' + ic('starFill') + '</span>' +
+          '<span><b>' + x.t.nome + '</b><small>' + x.d.nome + '</small></span></a>' +
+          '<button class="iconbtn" data-action="fav" data-d="' + x.d.id + '" data-t="' + x.t.id + '" aria-label="Remover dos favoritos">' + ic('trash') + '</button></div>';
+      }) + '</div>' :
+      empty('star', 'Você ainda não favoritou nenhum conteúdo.', 'Toque em “Favoritar” na área de estudo para salvar aqui.'));
+    return shell('favoritos', inner);
+  }
+
+  function when(ts) {
+    var dt = new Date(ts), today = new Date(); today.setHours(0, 0, 0, 0);
+    var diff = Math.floor((today - new Date(dt.getFullYear(), dt.getMonth(), dt.getDate())) / 864e5);
+    var hm = (dt.getHours() < 10 ? '0' : '') + dt.getHours() + ':' + (dt.getMinutes() < 10 ? '0' : '') + dt.getMinutes();
+    if (diff <= 0) return 'Hoje, ' + hm;
+    if (diff === 1) return 'Ontem, ' + hm;
+    return diff + ' dias atrás';
+  }
+  function viewHistorico() {
+    var items = state.hist.map(function (h) { var d = disc(h.d), t = topic(d, h.t), f = fmt(h.f); return d && t && f && { d: d, t: t, f: f, ts: h.ts }; }).filter(Boolean);
+    var inner = pageHead('Histórico', 'Tudo o que você estudou recentemente.') + (items.length ?
+      '<div class="timeline">' + map(items, function (x) {
+        return '<a class="tl" href="#/estudo/' + x.d.id + '/' + x.t.id + '/' + x.f.id + '"><span class="tl__ic">' + ic(x.f.icon, '', 1.6) + '</span>' +
+          '<span class="tl__b"><b>' + x.t.nome + '</b><small>' + x.d.nome + ' · ' + x.f.nome + '</small></span><span class="tl__w">' + when(x.ts) + '</span></a>';
+      }) + '</div>' : empty('history', 'Nenhum estudo registrado ainda.', ''));
+    return shell('historico', inner);
+  }
+
+  function viewSimulados() {
+    if (ui.sim) return shell('simulados', simRun());
+    var inner = pageHead('Simulados', 'Treine com questões no estilo das provas.') +
+      '<div class="sgrid">' + map(D.simulados, function (s) {
+        var b = state.best[s.id];
+        return '<div class="scard"><span class="scard__ic">' + ic('edit', '', 1.6) + '</span><h3>' + s.nome + '</h3><p>' + s.desc + '</p>' +
+          '<div class="scard__meta"><span>' + ic('filetext') + s.qs.length + ' questões</span><span>' + ic('clock') + s.min + ' min</span>' + (b !== undefined ? '<span class="scard__best">' + ic('trophy') + b + '%</span>' : '') + '</div>' +
+          '<button class="btn btn--navy btn--block" data-action="sim-start" data-id="' + s.id + '">' + (b !== undefined ? 'Refazer' : 'Iniciar simulado') + ' ' + ic('arrowRight', '', 2) + '</button></div>';
+      }) + '</div>';
+    return shell('simulados', inner);
+  }
+  function simRun() {
+    var S = ui.sim, s = D.simulados.filter(function (x) { return x.id === S.id; })[0];
+    if (S.i >= s.qs.length) {
+      var ok = S.answers.filter(function (a, i) { return a === s.qs[i].a; }).length, pct = Math.round(ok / s.qs.length * 100);
+      return '<div class="simres">' + ring(pct, 120) + '<b class="simres__pct">' + pct + '%</b><h2>' + (pct >= 70 ? 'Mandou bem, ' + esc(state.nome) + '!' : 'Continue praticando!') + '</h2>' +
+        '<p>Você acertou ' + ok + ' de ' + s.qs.length + ' questões em “' + s.nome + '”.</p>' +
+        '<div class="simres__btns"><button class="btn btn--navy" data-action="sim-start" data-id="' + s.id + '">Refazer</button><button class="btn btn--ghost" data-action="sim-exit">Voltar aos simulados</button></div></div>';
+    }
+    var q = s.qs[S.i], ans = S.answers[S.i];
+    return '<button class="back" data-action="sim-exit">' + ic('arrowLeft') + ' Sair do simulado</button>' +
+      '<div class="simq"><div class="simq__top"><small>' + s.nome + '</small><span>Questão ' + (S.i + 1) + ' de ' + s.qs.length + '</span></div>' +
+      '<div class="bar bar--light"><i style="width:' + (S.i / s.qs.length * 100) + '%"></i></div>' +
+      '<h2>' + q.q + '</h2>' + map(q.opts, function (o, oi) {
+        var cls = ans === undefined ? '' : (oi === q.a ? ' ok' : (oi === ans ? ' bad' : ' dim'));
+        return '<button class="opt opt--lg' + cls + '" data-action="sim-answer" data-o="' + oi + '"' + (ans !== undefined ? ' disabled' : '') + '><span class="opt__l">' + 'ABCD'[oi] + '</span>' + o + '</button>';
+      }) + (ans !== undefined ? '<p class="q__exp ' + (ans === q.a ? 'is-ok' : 'is-bad') + '">' + (ans === q.a ? 'Correto! ' : 'Resposta correta: ' + 'ABCD'[q.a] + '. ') + q.exp + '</p>' +
+        '<button class="btn btn--navy" data-action="sim-next">' + (S.i + 1 < s.qs.length ? 'Próxima questão' : 'Ver resultado') + ' ' + ic('arrowRight', '', 2) + '</button>' : '') + '</div>';
+  }
+
+  function toggle(k, label, desc) {
+    var on = !!state.prefs[k];
+    return '<div class="setrow"><div><b>' + label + '</b><small>' + desc + '</small></div><button class="switch' + (on ? ' is-on' : '') + '" role="switch" aria-checked="' + on + '" aria-label="' + label + '" data-action="pref" data-k="' + k + '"><i></i></button></div>';
+  }
+  function viewConfig() {
+    var inner = pageHead('Configurações', 'Personalize sua experiência de estudo.') +
+      '<div class="setgrid">' +
+        '<section class="setcard"><h3>Perfil</h3>' +
+          '<form data-form="perfil"><label class="field"><span>Nome</span><span class="field__in">' + ic('user') + '<input name="nome" value="' + esc(state.nome) + '" maxlength="30"></span></label>' +
+          '<label class="field"><span>E-mail</span><span class="field__in">' + ic('mail') + '<input value="viviane@atempo.app" disabled></span></label>' +
+          '<button class="btn btn--navy" type="submit">Salvar alterações</button></form></section>' +
+        '<section class="setcard"><h3>Preferências</h3>' +
+          toggle('notif', 'Novos conteúdos', 'Avisar quando houver materiais novos') +
+          toggle('lembrete', 'Lembrete diário', 'Receber um lembrete para estudar') +
+          toggle('autoplay', 'Reprodução automática', 'Iniciar podcasts e vídeos automaticamente') +
+          toggle('offline', 'Modo offline', 'Baixar materiais para estudar sem internet') +
+          '<div class="setrow"><div><b>Meta semanal</b><small>Horas de estudo por semana</small></div><select class="select" data-pref="meta" aria-label="Meta semanal">' +
+            map(['5', '10', '15', '20'], function (v) { return '<option value="' + v + '"' + (state.prefs.meta === v ? ' selected' : '') + '>' + v + 'h</option>'; }) + '</select></div>' +
+        '</section>' +
+        '<section class="setcard"><h3>Conta</h3><p class="muted">Plano <b>Estudante</b> · renova em 12/12/2026</p>' +
+          '<div class="setbtns"><button class="btn btn--ghost" data-action="reset">Restaurar dados da demonstração</button><button class="btn btn--danger" data-action="logout">' + ic('logout') + 'Sair</button></div></section>' +
+      '</div>';
+    return shell('configuracoes', inner);
+  }
+
+  function viewPerfil() {
+    var inner = '<div class="profile"><div class="profile__av">' + initial() + '</div><h1>' + esc(state.nome) + '</h1><p class="muted">Estudante de Direito · 5º período</p>' +
+      '<div class="pstats"><div><b>' + progress() + '%</b><span>Progresso</span></div><div><b>' + state.studied.length + '</b><span>Estudados</span></div><div><b>' + state.favs.length + '</b><span>Favoritos</span></div></div>' +
+      '<div class="list plinks">' +
+        plink('#/historico', 'history', 'Histórico') + plink('#/simulados', 'edit', 'Simulados') + plink('#/favoritos', 'star', 'Favoritos') + plink('#/configuracoes', 'settings', 'Configurações') +
+      '</div><button class="btn btn--danger btn--block" data-action="logout">' + ic('logout') + 'Sair</button></div>';
+    return shell('perfil', inner);
+  }
+  function plink(h, i, l) { return '<a class="lrow lrow--link" href="' + h + '"><span class="lrow__main"><span class="lrow__ic">' + ic(i, '', 1.7) + '</span><b>' + l + '</b></span>' + ic('chevronRight') + '</a>'; }
+  function empty(icon, t, s) { return '<div class="empty"><span>' + ic(icon, '', 1.4) + '</span><b>' + t + '</b>' + (s ? '<p>' + s + '</p>' : '') + '<a class="btn btn--navy" href="#/materias">Explorar matérias</a></div>'; }
+
+  /* ================= ROTEAMENTO ================= */
+  var lastPath = null;
+  function route() { return (location.hash.replace(/^#/, '').split('?')[0] || '/').split('/').filter(Boolean); }
+
+  function render(keepScroll) {
+    var p = route(), html, a = p[0];
+    var path = p.join('/');
+    if (path !== lastPath) { closePop(); closeModal(); if (!/^estudo/.test(path)) stopPlayer(); ui.lmenu = false; }
+    var sc = window.scrollY;
+    document.body.classList.toggle('is-landing', !a);
+    if (!a) html = viewLanding();
+    else if (a === 'app') html = viewDashboard();
+    else if (a === 'materias') html = viewMaterias();
+    else if (a === 'favoritos') html = viewFavoritos();
+    else if (a === 'historico') html = viewHistorico();
+    else if (a === 'simulados') html = viewSimulados();
+    else if (a === 'configuracoes') html = viewConfig();
+    else if (a === 'perfil') html = viewPerfil();
+    else if (a === 'disciplina' && disc(p[1])) {
+      var d = disc(p[1]), t = topic(d, p[2]);
+      html = t ? viewFormats(d, t) : viewTopics(d);
+    } else if (a === 'estudo' && disc(p[1]) && topic(disc(p[1]), p[2]) && fmt(p[3])) {
+      if (path !== lastPath) stopPlayer();
+      html = viewStudy(disc(p[1]), topic(disc(p[1]), p[2]), fmt(p[3]));
+    } else { location.replace('#/'); return; }
+    app.innerHTML = html;
+    var ct = document.getElementById('content');
+    if (ct && path !== lastPath) ct.classList.add('is-enter');
+    var titles = { app: 'Início', materias: 'Minhas Matérias', favoritos: 'Favoritos', historico: 'Histórico', simulados: 'Simulados', configuracoes: 'Configurações', perfil: 'Perfil' };
+    document.title = a ? (titles[a] || (disc(p[1]) ? (topic(disc(p[1]), p[2]) || disc(p[1])).nome : 'ATEMPO')) + ' · ATEMPO' : 'ATEMPO — Direito. Aprenda no seu tempo.';
+    if (keepScroll) window.scrollTo(0, sc);
+    else if (path !== lastPath) window.scrollTo(0, 0);
+    lastPath = path;
+  }
+
+  /* ---------- player ---------- */
+  function updatePlayer() {
+    var fill = document.getElementById('p-fill'), cur = document.getElementById('p-cur'), pl = document.getElementById('player');
+    if (fill) fill.style.width = (player.t / player.dur * 100) + '%';
+    if (cur) cur.textContent = fmtTime(player.t);
+    var btns = document.querySelectorAll('#p-play');
+    for (var i = 0; i < btns.length; i++) btns[i].innerHTML = ic(player.playing ? 'pause' : 'play');
+    var sp = document.getElementById('p-speed'); if (sp) sp.textContent = player.speed + 'x';
+    if (pl) pl.classList.toggle('is-playing', player.playing);
+    var slide = document.getElementById('v-slide');
+    if (slide) {
+      var p = route(), d = disc(p[1]), t = topic(d, p[2]);
+      if (d && t) { var h = videoSlide(content(d, t), t); if (slide.innerHTML !== h) slide.innerHTML = h; }
+    }
+  }
+  function togglePlay() {
+    if (player.playing) { stopPlayer(); }
+    else {
+      if (player.t >= player.dur) player.t = 0;
+      player.playing = true;
+      player.timer = setInterval(function () {
+        player.t = Math.min(player.dur, player.t + player.speed * 4);
+        if (player.t >= player.dur) stopPlayer();
+        updatePlayer();
+      }, 1000);
+    }
+    updatePlayer();
+  }
+
+  /* ---------- popovers ---------- */
+  function closePop() { var p = document.getElementById('pop'); if (p) p.remove(); }
+  function openPop(html, anchor) {
+    closePop();
+    var el = document.createElement('div');
+    el.id = 'pop'; el.className = 'pop'; el.innerHTML = html;
+    document.body.appendChild(el);
+    var r = anchor.getBoundingClientRect();
+    el.style.top = (r.bottom + 10) + 'px';
+    el.style.right = Math.max(12, window.innerWidth - r.right - 6) + 'px';
+  }
+
+  /* ---------- eventos ---------- */
+  document.addEventListener('click', function (e) {
+    var el = e.target.closest('[data-action]');
+    if (!e.target.closest('#pop') && !(el && (el.dataset.action === 'notif' || el.dataset.action === 'usermenu'))) closePop();
+    if (!e.target.closest('[data-search-wrap]')) {
+      var ws = document.querySelectorAll('[data-search-wrap].has-res');
+      for (var w = 0; w < ws.length; w++) ws[w].classList.remove('has-res');
+    }
+    if (!el) return;
+    var A = el.dataset.action, ds = el.dataset, shellEl = document.getElementById('shell'), d, t, k;
+    switch (A) {
+      case 'open-login': openModal(loginHTML(), 'modal--login'); break;
+      case 'close-modal': closeModal(); break;
+      case 'open-search':
+        openModal('<div class="msearch"><h2>Buscar</h2>' + searchBox('q-modal') + '</div>', 'modal--search');
+        setTimeout(function () { var i = document.getElementById('q-modal'); if (i) i.focus(); }, 60);
+        break;
+      case 'toggle-lmenu': ui.lmenu = !ui.lmenu; render(true); break;
+      case 'scroll':
+        ui.lmenu = false;
+        var target = document.getElementById(ds.target);
+        var nav = el.parentNode.querySelectorAll('button');
+        for (var i = 0; i < nav.length; i++) nav[i].classList.toggle('is-active', nav[i] === el);
+        el.parentNode.classList.remove('is-open');
+        var bg = document.querySelector('.lburger'); if (bg) bg.innerHTML = ic('menu');
+        if (target) window.scrollTo({ top: ds.target === 'inicio' ? 0 : target.getBoundingClientRect().top + window.scrollY - 70, behavior: 'smooth' });
+        break;
+      case 'toast': toast(ds.msg); break;
+      case 'open-drawer': if (shellEl) { shellEl.classList.add('drawer-open'); document.body.classList.add('no-scroll'); } break;
+      case 'close-drawer': if (shellEl) { shellEl.classList.remove('drawer-open'); document.body.classList.remove('no-scroll'); } break;
+      case 'notif':
+        if (document.getElementById('pop')) { closePop(); break; }
+        openPop('<div class="pop__head"><b>Notificações</b><button class="link" data-action="toast" data-msg="Todas marcadas como lidas.">Marcar como lidas</button></div>' +
+          notif('headphones', 'Novo podcast disponível', 'Direitos Fundamentais — 15 min', 'há 10 min', '#/estudo/constitucional/direitos-fundamentais/podcast') +
+          notif('trophy', 'Meta semanal quase lá!', 'Você já completou ' + progress() + '% do seu progresso', 'há 2 h', '#/materias') +
+          notif('edit', 'Simulado liberado', 'Direito Empresarial — Teoria da Empresa', 'ontem', '#/simulados'), el);
+        break;
+      case 'usermenu':
+        if (document.getElementById('pop')) { closePop(); break; }
+        openPop('<div class="pop__user"><span class="avatar avatar--sm">' + initial() + '</span><span><b>' + esc(state.nome) + '</b><small>viviane@atempo.app</small></span></div>' +
+          '<a class="pop__link" href="#/perfil">' + ic('user') + 'Meu perfil</a><a class="pop__link" href="#/configuracoes">' + ic('settings') + 'Configurações</a>' +
+          '<button class="pop__link" data-action="logout">' + ic('logout') + 'Sair</button>', el);
+        break;
+      case 'logout': closePop(); location.hash = '#/'; toast('Você saiu da sua conta.'); break;
+      case 'select-topic':
+        d = disc(ds.d);
+        if (ui.sel[d.id] === ds.t && window.innerWidth >= 768) { location.hash = '#/disciplina/' + ds.d + '/' + ds.t; break; }
+        ui.sel[d.id] = ds.t; render(true);
+        if (window.innerWidth < 768) { var det = document.getElementById('tdetail'); if (det) det.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        break;
+      case 'fav':
+        k = ds.d + '/' + ds.t;
+        if (state.favs.indexOf(k) > -1) { state.favs = state.favs.filter(function (x) { return x !== k; }); toast('Removido dos favoritos.'); }
+        else { state.favs.push(k); toast('Adicionado aos favoritos!'); }
+        save('favs'); render(true); break;
+      case 'studied':
+        k = ds.d + '/' + ds.t;
+        if (state.studied.indexOf(k) > -1) { state.studied = state.studied.filter(function (x) { return x !== k; }); toast('Marcação removida.'); }
+        else { state.studied.push(k); toast('Conteúdo marcado como estudado! Seu progresso subiu para ' + progress() + '%.'); }
+        save('studied'); render(true); break;
+      case 'tab': ui.tab = +ds.i; render(true); break;
+      case 'answer': ui.answers[ds.k] = +ds.o; render(true); break;
+      case 'pdf-prev': if (ui.pdf.page > 1) { ui.pdf.page--; render(true); } break;
+      case 'pdf-next': ui.pdf.page++; { var pp = route(); var cc = content(disc(pp[1]), topic(disc(pp[1]), pp[2])); ui.pdf.page = Math.min(ui.pdf.page, cc.pages.length); } render(true); break;
+      case 'zoom': var z = +ds.z; ui.pdf.zoom = z === 0 ? 100 : Math.max(60, Math.min(160, ui.pdf.zoom + z)); render(true); break;
+      case 'fullscreen':
+        var fe = document.querySelector(ds.el);
+        if (document.fullscreenElement) document.exitFullscreen();
+        else if (fe && fe.requestFullscreen) fe.requestFullscreen().catch(function () { toast('Tela cheia indisponível neste dispositivo.'); });
+        else toast('Tela cheia indisponível neste dispositivo.');
+        break;
+      case 'play': togglePlay(); break;
+      case 'skip': player.t = Math.max(0, Math.min(player.dur, player.t + (+ds.s))); updatePlayer(); break;
+      case 'seekto': player.t = +ds.s; if (!player.playing) togglePlay(); else updatePlayer(); break;
+      case 'seek':
+        var r = el.getBoundingClientRect();
+        player.t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * player.dur; updatePlayer(); break;
+      case 'speed': var sp = [1, 1.25, 1.5, 2]; player.speed = sp[(sp.indexOf(player.speed) + 1) % sp.length]; updatePlayer();
+        if (player.playing) { stopPlayer(); togglePlay(); } break;
+      case 'mm': ui.mm = ui.mm === +ds.i ? null : +ds.i; render(true); break;
+      case 'sim-start': ui.sim = { id: ds.id, i: 0, answers: [] }; render(); break;
+      case 'sim-answer':
+        ui.sim.answers[ui.sim.i] = +ds.o; render(true); break;
+      case 'sim-next':
+        ui.sim.i++;
+        var s = D.simulados.filter(function (x) { return x.id === ui.sim.id; })[0];
+        if (ui.sim.i >= s.qs.length) {
+          var ok = ui.sim.answers.filter(function (a, i) { return a === s.qs[i].a; }).length;
+          var pct = Math.round(ok / s.qs.length * 100);
+          state.best[s.id] = Math.max(state.best[s.id] || 0, pct); save('best');
+        }
+        render(); break;
+      case 'sim-exit': ui.sim = null; render(); break;
+      case 'pref': state.prefs[ds.k] = !state.prefs[ds.k]; save('prefs'); render(true); toast('Preferência atualizada.'); break;
+      case 'reset':
+        ['nome', 'favs', 'studied', 'hist', 'prefs', 'best', 'lastFmt'].forEach(function (x) { try { localStorage.removeItem('atempo:' + x); } catch (er) { /* sem armazenamento */ } });
+        location.hash = '#/app'; location.reload(); break;
+    }
+  });
+
+  function notif(i, t, s, w, href) {
+    return '<a class="pop__item" href="' + href + '"><span class="pop__ic">' + ic(i, '', 1.7) + '</span><span><b>' + t + '</b><small>' + s + '</small><em>' + w + '</em></span></a>';
+  }
+
+  document.addEventListener('input', function (e) {
+    if (e.target.matches('[data-search]')) {
+      var wrap = e.target.closest('[data-search-wrap]'), res = wrap.querySelector('.search__res');
+      res.innerHTML = searchHTML(e.target.value);
+      wrap.classList.toggle('has-res', !!e.target.value.trim());
+    }
+  });
+  document.addEventListener('focusin', function (e) {
+    if (e.target.matches('[data-search]') && e.target.value.trim()) e.target.closest('[data-search-wrap]').classList.add('has-res');
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.matches('[data-pref]')) { state.prefs[e.target.dataset.pref] = e.target.value; save('prefs'); toast('Meta semanal: ' + e.target.value + 'h.'); }
+  });
+  document.addEventListener('submit', function (e) {
+    var f = e.target.dataset.form;
+    if (!f) return;
+    e.preventDefault();
+    if (f === 'login') { closeModal(); location.hash = '#/app'; setTimeout(function () { toast('Bem-vinda, ' + state.nome + '!'); }, 150); }
+    if (f === 'perfil') {
+      var v = e.target.nome.value.trim();
+      if (!v) { toast('Informe um nome.'); return; }
+      state.nome = v; save('nome'); render(true); toast('Perfil atualizado!');
+    }
+  });
+  document.addEventListener('keydown', function (e) {
+    if (e.key === 'Escape') {
+      closeModal(); closePop();
+      var sh = document.getElementById('shell'); if (sh) sh.classList.remove('drawer-open');
+      document.body.classList.remove('no-scroll');
+    }
+    if ((e.key === 'Enter' || e.key === ' ') && e.target.matches('.mm__node[data-action]')) { e.preventDefault(); e.target.dispatchEvent(new MouseEvent('click', { bubbles: true })); }
+    if (e.target.matches('input, textarea, select')) return;
+    if (document.querySelector('.viewer')) {
+      if (e.key === 'ArrowRight') { var n = document.querySelector('[data-action="pdf-next"]:not([disabled])'); if (n) n.click(); }
+      if (e.key === 'ArrowLeft') { var pv = document.querySelector('[data-action="pdf-prev"]:not([disabled])'); if (pv) pv.click(); }
+    }
+  });
+
+  /* gesto de deslizar no PDF (celular) */
+  var sx = null, sy = null;
+  document.addEventListener('touchstart', function (e) { if (e.target.closest('[data-swipe]')) { sx = e.touches[0].clientX; sy = e.touches[0].clientY; } else sx = null; }, { passive: true });
+  document.addEventListener('touchend', function (e) {
+    if (sx === null) return;
+    var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+      var b = document.querySelector('[data-action="' + (dx < 0 ? 'pdf-next' : 'pdf-prev') + '"]:not([disabled])');
+      if (b) b.click();
+    }
+    sx = null;
+  }, { passive: true });
+
+  window.addEventListener('hashchange', function () { render(); });
+  window.addEventListener('resize', closePop);
+  window.addEventListener('scroll', function () { if (document.getElementById('pop')) closePop(); }, { passive: true });
+  render();
+})();

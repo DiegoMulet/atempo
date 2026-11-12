@@ -1,0 +1,13 @@
+{
+  "name": "ATEMPO — Aprenda no seu tempo",
+  "short_name": "ATEMPO",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#ffffff",
+  "theme_color": "#0d2c47",
+  "lang": "pt-BR",
+  "icons": [
+    { "src": "assets/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}
