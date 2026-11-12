@@ -56,43 +56,7 @@
   function isStudied(d, t) { return state.studied.indexOf(d.id + '/' + t.id) > -1; }
   function initial() { return (state.nome.trim()[0] || 'V').toUpperCase(); }
 
-  /* conteúdo de um tópico (específico ou gerado) */
-  function content(d, t) {
-    var sp = D.especifico[d.id + '/' + t.id];
-    if (sp) return sp;
-    var nome = t.nome, area = d.nome;
-    var outras = D.disciplinas.filter(function (x) { return x.id !== d.id; }).slice(0, 3).map(function (x) { return x.lei; });
-    var opts = [d.lei].concat(outras);
-    return {
-      resumo: [
-        t.desc,
-        nome + ' tem como base normativa principal: ' + d.lei + '.',
-        'Dominar ' + nome.toLowerCase() + ' exige unir texto legal, doutrina e jurisprudência dos tribunais superiores.'
-      ],
-      pages: [
-        [{ h: 'Conceito', p: t.desc }, { h: 'Pontos-chave', li: ['Conceito e natureza jurídica', 'Características principais', 'Fundamento legal', 'Aplicação prática'] }],
-        [{ h: 'Fundamento legal', p: 'O tema é disciplinado principalmente por: ' + d.lei + '. A leitura atenta dos dispositivos é o primeiro passo para compreender o assunto.' }],
-        [{ h: 'Características', p: 'O estudo de ' + nome.toLowerCase() + ' envolve a identificação de seus elementos essenciais e das relações com outros institutos de ' + area + '.' }],
-        [{ h: 'Visão da doutrina', p: 'A doutrina sistematiza os conceitos, organiza classificações e aponta divergências relevantes para a interpretação do tema.' }],
-        [{ h: 'Jurisprudência', p: 'Os entendimentos do STF e do STJ orientam a aplicação prática do tema e são frequentemente cobrados em provas.' }],
-        [{ h: 'Aplicação prática', p: 'Em casos concretos, identifique os fatos relevantes, enquadre-os nas normas aplicáveis e verifique as consequências jurídicas.' }],
-        [{ h: 'Pontos de atenção', li: ['Leia a literalidade da lei', 'Observe exceções e prazos', 'Relacione com súmulas e precedentes'] }],
-        [{ h: 'Síntese', p: 'Revise o resumo ao lado e resolva as questões para fixar o conteúdo de ' + nome + '.' }]
-      ],
-      refs: [d.lei, 'Constituição Federal de 1988', 'Jurisprudência do STF e do STJ', 'Doutrina de referência em ' + area],
-      questoes: [{ q: 'Qual é a principal base normativa para o estudo de "' + nome + '"?', opts: opts, a: 0, exp: 'O tema é disciplinado principalmente por: ' + d.lei + '.' }],
-      mapa: {
-        centro: nome,
-        ramos: [
-          { n: 'Conceito', d: t.desc, c: ['Definição', 'Natureza'] },
-          { n: 'Fundamento', d: 'Base normativa: ' + d.lei + '.', c: ['Lei', 'Princípios'] },
-          { n: 'Características', d: 'Elementos essenciais que identificam o instituto.', c: ['Elementos', 'Requisitos'] },
-          { n: 'Jurisprudência', d: 'Entendimentos consolidados nos tribunais superiores.', c: ['STF', 'STJ'] },
-          { n: 'Prática', d: 'Aplicação do tema em casos concretos e em provas.', c: ['Casos', 'Provas'] }
-        ]
-      }
-    };
-  }
+  var content = D.content;
 
   /* ---------- toast & modais ---------- */
   var toastTimer;
@@ -371,8 +335,39 @@
   }
 
   /* ================= ÁREA DE ESTUDO ================= */
-  var player = { key: '', t: 0, dur: 900, playing: false, speed: 1, timer: null, kind: '' };
-  function stopPlayer() { player.playing = false; clearInterval(player.timer); player.timer = null; }
+  /* áudio real: um elemento para podcast/videoaula e outro para "Ouvir resumo" */
+  var AUDIO = window.ATEMPO_AUDIO || {};
+  var audio = new Audio(), resumoAudio = new Audio();
+  audio.preload = 'metadata'; resumoAudio.preload = 'none';
+  var player = { key: '', info: null, speed: 1, d: null, t: null, kind: '' };
+  function audioInfo(d, t, kind) { return (AUDIO[d.id + '/' + t.id] || {})[kind]; }
+  function pDur() { return (player.info && player.info.dur) || audio.duration || 0; }
+  function pTime() { return audio.currentTime || 0; }
+  function stopPlayer() { audio.pause(); resumoAudio.pause(); }
+  function setupPlayer(kind, d, t) {
+    var key = d.id + '/' + t.id + '/' + kind;
+    if (player.key !== key) {
+      audio.pause();
+      player.key = key; player.kind = kind; player.d = d; player.t = t;
+      player.info = audioInfo(d, t, kind);
+      audio.src = player.info ? player.info.src : '';
+      audio.defaultPlaybackRate = audio.playbackRate = player.speed;
+    }
+    return player.info;
+  }
+  function chapterIdx(list) {
+    var idx = 0, now = pTime();
+    (list || []).forEach(function (x, i) { if (now >= x.t - 0.05) idx = i; });
+    return idx;
+  }
+  function mediaSession() {
+    if (!('mediaSession' in navigator) || !player.t) return;
+    try {
+      navigator.mediaSession.metadata = new MediaMetadata({ title: player.t.nome, artist: player.kind === 'podcast' ? 'ATEMPO Podcast' : 'ATEMPO Videoaula', album: player.d.nome, artwork: [{ src: 'assets/icon.svg', sizes: '512x512', type: 'image/svg+xml' }] });
+      navigator.mediaSession.setActionHandler('seekbackward', function () { audio.currentTime = Math.max(0, pTime() - 15); });
+      navigator.mediaSession.setActionHandler('seekforward', function () { audio.currentTime = Math.min(pDur(), pTime() + 15); });
+    } catch (e) { /* Media Session indisponível */ }
+  }
 
   function viewStudy(d, t, f) {
     var c = content(d, t);
@@ -449,7 +444,8 @@
     var tabs = ['Resumo', 'Referências', 'Questões'];
     var body;
     if (ui.tab === 0) {
-      body = '<h3>Resumo</h3><ul class="blist">' + map(c.resumo, function (r) { return '<li>' + r + '</li>'; }) + '</ul>';
+      var ra = audioInfo(d, t, 'resumo'), ron = ra && !resumoAudio.paused && resumoAudio.getAttribute('src') === ra.src;
+      body = '<div class="rhead"><h3>Resumo</h3>' + (ra ? '<button class="rplay' + (ron ? ' is-on' : '') + '" id="r-play" data-action="resumo-audio" data-src="' + ra.src + '">' + ic(ron ? 'pause' : 'volume') + '<span>' + (ron ? 'Pausar' : 'Ouvir resumo') + '</span></button>' : '') + '</div><ul class="blist">' + map(c.resumo, function (r) { return '<li>' + r + '</li>'; }) + '</ul>';
     } else if (ui.tab === 1) {
       body = '<h3>Referências</h3><ul class="rflist">' + map(c.refs, function (r) { return '<li>' + ic('book', '', 1.6) + '<span>' + r + '</span></li>'; }) + '</ul>';
     } else {
@@ -466,72 +462,70 @@
     }) + '</div><div class="panel__body">' + body + '</div></aside>';
   }
 
-  function chaptersFor(c, dur) {
-    var hs = ['Introdução'];
-    c.pages.forEach(function (pg) { pg.forEach(function (s) { if (hs.length < 6 && hs.indexOf(s.h) < 0) hs.push(s.h); }); });
-    return hs.map(function (h, i) { return { h: h, t: Math.round(dur * i / hs.length) }; });
-  }
-  function setupPlayer(kind, key, dur) {
-    if (player.key !== key + kind) { stopPlayer(); player.key = key + kind; player.t = 0; player.dur = dur; player.speed = 1; player.kind = kind; }
+  function chapList(list) {
+    var cur = chapterIdx(list);
+    return '<div class="chapters"><h3>Capítulos</h3>' + map(list, function (x, i) {
+      return '<button class="chap' + (i === cur ? ' is-on' : '') + '" data-action="seekto" data-s="' + x.t + '" data-i="' + i + '"><span class="chap__n">' + (i + 1) + '</span><span class="chap__t">' + esc(x.h) + '</span><span class="chap__time">' + fmtTime(x.t) + '</span></button>';
+    }) + '</div>';
   }
 
-  function podcastView(c, d, t, f) {
-    setupPlayer('podcast', d.id + '/' + t.id, 15 * 60);
-    var ch = chaptersFor(c, player.dur);
+  function podcastView(c, d, t) {
+    var info = setupPlayer('podcast', d, t), playing = !audio.paused;
+    var ch = info ? info.ch : [];
     var bars = '';
     for (var i = 0; i < 28; i++) bars += '<i style="--h:' + (20 + Math.round(Math.abs(Math.sin(i * 1.7)) * 70)) + '%;--d:' + (i % 7) * 0.09 + 's"></i>';
     return '' +
-'<div class="player' + (player.playing ? ' is-playing' : '') + '" id="player">' +
+'<div class="player' + (playing ? ' is-playing' : '') + '" id="player">' +
   '<div class="player__top">' +
     '<div class="player__cover">' + ic('headphones', '', 1.4) + '<div class="wave">' + bars + '</div><span>ATEMPO Podcast</span></div>' +
     '<div class="player__info">' +
       '<small>Podcast · ' + d.nome + '</small>' +
       '<h2>' + t.nome + '</h2>' +
       '<p>' + t.desc + '</p>' +
-      '<div class="ptrack" data-action="seek" role="slider" aria-label="Progresso do áudio" aria-valuemin="0" aria-valuemax="' + player.dur + '" aria-valuenow="' + Math.floor(player.t) + '"><i id="p-fill" style="width:' + (player.t / player.dur * 100) + '%"></i></div>' +
-      '<div class="ptimes"><span id="p-cur">' + fmtTime(player.t) + '</span><span>' + fmtTime(player.dur) + '</span></div>' +
+      progressBar('') +
+      '<div class="ptimes"><span id="p-cur">' + fmtTime(pTime()) + '</span><span>' + fmtTime(pDur()) + '</span></div>' +
       '<div class="pctrl">' +
         '<button class="pbtn" data-action="skip" data-s="-15" aria-label="Voltar 15 segundos">' + ic('back15', '', 1.7) + '</button>' +
-        '<button class="pbtn pbtn--main" data-action="play" aria-label="Reproduzir ou pausar" id="p-play">' + ic(player.playing ? 'pause' : 'play') + '</button>' +
+        '<button class="pbtn pbtn--main" data-action="play" aria-label="Reproduzir ou pausar" id="p-play">' + ic(playing ? 'pause' : 'play') + '</button>' +
         '<button class="pbtn" data-action="skip" data-s="15" aria-label="Avançar 15 segundos">' + ic('fwd15', '', 1.7) + '</button>' +
         '<button class="pspeed" data-action="speed" id="p-speed">' + player.speed + 'x</button>' +
       '</div>' +
     '</div>' +
   '</div>' +
-  '<div class="chapters"><h3>Capítulos</h3>' + map(ch, function (x, i) {
-    return '<button class="chap" data-action="seekto" data-s="' + x.t + '"><span class="chap__n">' + (i + 1) + '</span><span class="chap__t">' + x.h + '</span><span class="chap__time">' + fmtTime(x.t) + '</span></button>';
-  }) + '</div>' +
+  chapList(ch) +
 '</div>';
   }
+  function progressBar(cls) {
+    var pct = pDur() ? pTime() / pDur() * 100 : 0;
+    return '<div class="ptrack' + cls + '" data-action="seek" role="slider" aria-label="Progresso" aria-valuemin="0" aria-valuemax="' + Math.round(pDur()) + '" aria-valuenow="' + Math.floor(pTime()) + '"><i id="p-fill" style="width:' + pct + '%"></i></div>';
+  }
 
-  function videoSlide(c, t) {
-    var ch = chaptersFor(c, player.dur), idx = 0;
-    ch.forEach(function (x, i) { if (player.t >= x.t) idx = i; });
-    var pts = c.resumo.slice(0, 1 + (idx % 3));
-    return '<small>' + (idx + 1) + ' / ' + ch.length + ' · ' + ch[idx].h + '</small><h3>' + (idx === 0 ? t.nome : ch[idx].h) + '</h3><ul>' + map(pts, function (p) { return '<li>' + p + '</li>'; }) + '</ul>';
+  function videoSlide() {
+    var sl = player.info ? player.info.slides : [];
+    if (!sl.length) return '';
+    var idx = chapterIdx(sl), s = sl[idx];
+    return '<small>' + (idx + 1) + ' / ' + sl.length + ' · ' + esc(idx === 0 ? 'Introdução' : s.h) + '</small><h3>' + esc(s.h) + '</h3><ul>' + map(s.pts, function (p) { return '<li>' + esc(p) + '</li>'; }) + '</ul>';
   }
   function videoView(c, d, t) {
-    setupPlayer('video', d.id + '/' + t.id, 18 * 60);
-    var ch = chaptersFor(c, player.dur);
+    var info = setupPlayer('video', d, t), playing = !audio.paused;
+    var ch = info ? info.slides.map(function (s, i) { return { h: i === 0 ? 'Introdução' : s.h, t: s.t }; }) : [];
     return '' +
-'<div class="vid' + (player.playing ? ' is-playing' : '') + '" id="player">' +
+'<div class="vid' + (playing ? ' is-playing' : '') + '" id="player">' +
   '<div class="vid__screen">' +
-    '<div class="vid__slide" id="v-slide">' + videoSlide(c, t) + '</div>' +
+    '<div class="vid__slide" id="v-slide">' + videoSlide() + '</div>' +
     '<div class="vid__prof" aria-hidden="true"><span>' + ic('user', '', 1.5) + '</span><b>Prof.ª Helena Martins</b></div>' +
     '<button class="vid__big" data-action="play" aria-label="Reproduzir">' + ic('play') + '</button>' +
     '<div class="vid__bar">' +
-      '<button class="vbtn" data-action="play" id="p-play" aria-label="Reproduzir ou pausar">' + ic(player.playing ? 'pause' : 'play') + '</button>' +
-      '<span class="vid__time"><span id="p-cur">' + fmtTime(player.t) + '</span> / ' + fmtTime(player.dur) + '</span>' +
-      '<div class="ptrack ptrack--dark" data-action="seek"><i id="p-fill" style="width:' + (player.t / player.dur * 100) + '%"></i></div>' +
+      '<button class="vbtn" data-action="play" id="p-play" aria-label="Reproduzir ou pausar">' + ic(playing ? 'pause' : 'play') + '</button>' +
+      '<span class="vid__time"><span id="p-cur">' + fmtTime(pTime()) + '</span> / ' + fmtTime(pDur()) + '</span>' +
+      progressBar(' ptrack--dark') +
       '<button class="pspeed pspeed--dark" data-action="speed" id="p-speed">' + player.speed + 'x</button>' +
-      '<button class="vbtn" data-action="toast" data-msg="Legendas ativadas (demonstração)." aria-label="Volume">' + ic('volume') + '</button>' +
+      '<button class="vbtn" data-action="mute" id="p-mute" aria-label="Som">' + ic(audio.muted ? 'volumeOff' : 'volume') + '</button>' +
       '<button class="vbtn" data-action="fullscreen" data-el=".vid__screen" aria-label="Tela cheia">' + ic('maximize') + '</button>' +
     '</div>' +
   '</div>' +
   '<div class="vid__meta"><small>Videoaula · ' + d.nome + '</small><h2>' + t.nome + '</h2></div>' +
-  '<div class="chapters"><h3>Capítulos</h3>' + map(ch, function (x, i) {
-    return '<button class="chap" data-action="seekto" data-s="' + x.t + '"><span class="chap__n">' + (i + 1) + '</span><span class="chap__t">' + x.h + '</span><span class="chap__time">' + fmtTime(x.t) + '</span></button>';
-  }) + '</div>' +
+  chapList(ch) +
 '</div>';
   }
 
@@ -728,31 +722,39 @@
 
   /* ---------- player ---------- */
   function updatePlayer() {
-    var fill = document.getElementById('p-fill'), cur = document.getElementById('p-cur'), pl = document.getElementById('player');
-    if (fill) fill.style.width = (player.t / player.dur * 100) + '%';
-    if (cur) cur.textContent = fmtTime(player.t);
+    var pl = document.getElementById('player');
+    if (!pl) return;
+    var playing = !audio.paused;
+    var fill = document.getElementById('p-fill'), cur = document.getElementById('p-cur');
+    if (fill) { fill.style.width = (pDur() ? pTime() / pDur() * 100 : 0) + '%'; fill.parentNode.setAttribute('aria-valuenow', Math.floor(pTime())); }
+    if (cur) cur.textContent = fmtTime(pTime());
     var btns = document.querySelectorAll('#p-play');
-    for (var i = 0; i < btns.length; i++) btns[i].innerHTML = ic(player.playing ? 'pause' : 'play');
+    for (var i = 0; i < btns.length; i++) btns[i].innerHTML = ic(playing ? 'pause' : 'play');
     var sp = document.getElementById('p-speed'); if (sp) sp.textContent = player.speed + 'x';
-    if (pl) pl.classList.toggle('is-playing', player.playing);
+    var mu = document.getElementById('p-mute'); if (mu) mu.innerHTML = ic(audio.muted ? 'volumeOff' : 'volume');
+    pl.classList.toggle('is-playing', playing);
+    var list = player.info ? (player.info.ch || player.info.slides) : [], ci = chapterIdx(list);
+    var chs = document.querySelectorAll('.chap');
+    for (var j = 0; j < chs.length; j++) chs[j].classList.toggle('is-on', j === ci);
     var slide = document.getElementById('v-slide');
-    if (slide) {
-      var p = route(), d = disc(p[1]), t = topic(d, p[2]);
-      if (d && t) { var h = videoSlide(content(d, t), t); if (slide.innerHTML !== h) slide.innerHTML = h; }
-    }
+    if (slide) { var h = videoSlide(); if (slide.getAttribute('data-i') !== String(ci)) { slide.innerHTML = h; slide.setAttribute('data-i', ci); } }
   }
   function togglePlay() {
-    if (player.playing) { stopPlayer(); }
-    else {
-      if (player.t >= player.dur) player.t = 0;
-      player.playing = true;
-      player.timer = setInterval(function () {
-        player.t = Math.min(player.dur, player.t + player.speed * 4);
-        if (player.t >= player.dur) stopPlayer();
-        updatePlayer();
-      }, 1000);
-    }
-    updatePlayer();
+    if (!player.info) { toast('Áudio indisponível para este conteúdo.'); return; }
+    if (audio.paused) {
+      resumoAudio.pause();
+      if (audio.ended) audio.currentTime = 0;
+      var pr = audio.play();
+      if (pr && pr.catch) pr.catch(function () { toast('Toque novamente no play para ouvir.'); });
+      mediaSession();
+    } else audio.pause();
+  }
+  ['play', 'pause', 'ended', 'timeupdate', 'loadedmetadata', 'seeked'].forEach(function (ev) { audio.addEventListener(ev, updatePlayer); });
+  audio.addEventListener('error', function () { if (audio.getAttribute('src')) toast('Não foi possível carregar o áudio. Verifique a conexão.'); });
+  ['play', 'pause', 'ended'].forEach(function (ev) { resumoAudio.addEventListener(ev, updateResumoBtn); });
+  function updateResumoBtn() {
+    var b = document.getElementById('r-play');
+    if (b) { var on = !resumoAudio.paused; b.classList.toggle('is-on', on); b.innerHTML = ic(on ? 'pause' : 'volume') + '<span>' + (on ? 'Pausar' : 'Ouvir resumo') + '</span>'; }
   }
 
   /* ---------- popovers ---------- */
@@ -839,13 +841,21 @@
         else toast('Tela cheia indisponível neste dispositivo.');
         break;
       case 'play': togglePlay(); break;
-      case 'skip': player.t = Math.max(0, Math.min(player.dur, player.t + (+ds.s))); updatePlayer(); break;
-      case 'seekto': player.t = +ds.s; if (!player.playing) togglePlay(); else updatePlayer(); break;
+      case 'skip': audio.currentTime = Math.max(0, Math.min(pDur(), pTime() + (+ds.s))); updatePlayer(); break;
+      case 'seekto': audio.currentTime = +ds.s + 0.05; if (audio.paused) togglePlay(); else updatePlayer(); break;
       case 'seek':
         var r = el.getBoundingClientRect();
-        player.t = Math.max(0, Math.min(1, (e.clientX - r.left) / r.width)) * player.dur; updatePlayer(); break;
-      case 'speed': var sp = [1, 1.25, 1.5, 2]; player.speed = sp[(sp.indexOf(player.speed) + 1) % sp.length]; updatePlayer();
-        if (player.playing) { stopPlayer(); togglePlay(); } break;
+        audio.currentTime = Math.max(0, Math.min(0.999, (e.clientX - r.left) / r.width)) * pDur(); updatePlayer(); break;
+      case 'speed': var sp = [1, 1.25, 1.5, 2]; player.speed = sp[(sp.indexOf(player.speed) + 1) % sp.length];
+        audio.defaultPlaybackRate = audio.playbackRate = player.speed; updatePlayer(); break;
+      case 'mute': audio.muted = !audio.muted; updatePlayer(); break;
+      case 'resumo-audio':
+        if (!resumoAudio.paused) { resumoAudio.pause(); break; }
+        audio.pause();
+        if (resumoAudio.getAttribute('src') !== ds.src) resumoAudio.src = ds.src;
+        var rp = resumoAudio.play();
+        if (rp && rp.catch) rp.catch(function () { toast('Toque novamente para ouvir.'); });
+        break;
       case 'mm': ui.mm = ui.mm === +ds.i ? null : +ds.i; render(true); break;
       case 'sim-start': ui.sim = { id: ds.id, i: 0, answers: [] }; render(); break;
       case 'sim-answer':

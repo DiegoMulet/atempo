@@ -180,8 +180,46 @@
     { id: 'fundamentos', nome: 'Fundamentos — Constitucional, Penal e Civil', desc: 'Base essencial para começar bem.', min: 6, qs: banco.slice(0, 3) }
   ];
 
+  /* conteúdo de um tópico (específico ou gerado a partir dos dados) */
+  function content(d, t) {
+    var sp = especifico[d.id + '/' + t.id];
+    if (sp) return sp;
+    var nome = t.nome, area = d.nome;
+    var outras = disciplinas.filter(function (x) { return x.id !== d.id; }).slice(0, 3).map(function (x) { return x.lei; });
+    return {
+      resumo: [
+        t.desc,
+        nome + ' tem como base normativa principal: ' + d.lei + '.',
+        'Dominar ' + nome.toLowerCase() + ' exige unir texto legal, doutrina e jurisprudência dos tribunais superiores.'
+      ],
+      pages: [
+        [{ h: 'Conceito', p: t.desc }, { h: 'Pontos-chave', li: ['Conceito e natureza jurídica', 'Características principais', 'Fundamento legal', 'Aplicação prática'] }],
+        [{ h: 'Fundamento legal', p: 'O tema é disciplinado principalmente por: ' + d.lei + '. A leitura atenta dos dispositivos é o primeiro passo para compreender o assunto.' }],
+        [{ h: 'Características', p: 'O estudo de ' + nome.toLowerCase() + ' envolve a identificação de seus elementos essenciais e das relações com outros institutos de ' + area + '.' }],
+        [{ h: 'Visão da doutrina', p: 'A doutrina sistematiza os conceitos, organiza classificações e aponta divergências relevantes para a interpretação do tema.' }],
+        [{ h: 'Jurisprudência', p: 'Os entendimentos do STF e do STJ orientam a aplicação prática do tema e são frequentemente cobrados em provas.' }],
+        [{ h: 'Aplicação prática', p: 'Em casos concretos, identifique os fatos relevantes, enquadre-os nas normas aplicáveis e verifique as consequências jurídicas.' }],
+        [{ h: 'Pontos de atenção', li: ['Leia a literalidade da lei', 'Observe exceções e prazos', 'Relacione com súmulas e precedentes'] }],
+        [{ h: 'Síntese', p: 'Revise o resumo ao lado e resolva as questões para fixar o conteúdo de ' + nome + '.' }]
+      ],
+      refs: [d.lei, 'Constituição Federal de 1988', 'Jurisprudência do STF e do STJ', 'Doutrina de referência em ' + area],
+      questoes: [{ q: 'Qual é a principal base normativa para o estudo de "' + nome + '"?', opts: [d.lei].concat(outras), a: 0, exp: 'O tema é disciplinado principalmente por: ' + d.lei + '.' }],
+      mapa: {
+        centro: nome,
+        ramos: [
+          { n: 'Conceito', d: t.desc, c: ['Definição', 'Natureza'] },
+          { n: 'Fundamento', d: 'Base normativa: ' + d.lei + '.', c: ['Lei', 'Princípios'] },
+          { n: 'Características', d: 'Elementos essenciais que identificam o instituto.', c: ['Elementos', 'Requisitos'] },
+          { n: 'Jurisprudência', d: 'Entendimentos consolidados nos tribunais superiores.', c: ['STF', 'STJ'] },
+          { n: 'Prática', d: 'Aplicação do tema em casos concretos e em provas.', c: ['Casos', 'Provas'] }
+        ]
+      }
+    };
+  }
+
   window.ATEMPO_DATA = {
     slug: slug,
+    content: content,
     disciplinas: disciplinas,
     formatos: formatos,
     especifico: especifico,

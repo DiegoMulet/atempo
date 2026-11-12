@@ -13,6 +13,15 @@ Todas as interações são simuladas — não há back-end.
 - Abas Resumo / Referências / Questões (quiz), Marcar como estudado, Favoritar
 - Minhas Matérias, Favoritos, Histórico, Simulados (com resultado), Configurações e Perfil
 
+## Áudio real
+Podcast (diálogo entre Rafael e a Prof.ª Helena), narração da Videoaula (com slides sincronizados) e "Ouvir resumo"
+são MP3 reais em `audio/`, gerados com vozes neurais pt-BR (edge-tts). Para regenerar após mudar o conteúdo:
+```bash
+pip install edge-tts mutagen
+node tools/roteiros.js > tools/roteiros.json
+python tools/gerar_audio.py
+```
+
 O estado (favoritos, estudados, nome, simulados) fica salvo no navegador. Para zerar:
 Configurações → "Restaurar dados da demonstração".
 
