@@ -84,6 +84,7 @@ async def main():
         with open(MANIFESTO, encoding='utf-8') as f:
             manifesto = json.loads(f.read().split('=', 1)[1].rstrip().rstrip(';'))
     manifesto.update(dict(res))
+    manifesto = {k: v for k, v in manifesto.items() if k in roteiros}  # remove assuntos que saíram
     with open(MANIFESTO, 'w', encoding='utf-8') as f:
         f.write('/* gerado por tools/gerar_audio.py */\nwindow.ATEMPO_AUDIO = ' + json.dumps(manifesto, ensure_ascii=False) + ';\n')
 

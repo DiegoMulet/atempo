@@ -306,11 +306,12 @@
     '<div class="tlist" role="listbox" aria-label="Assuntos">' + map(d.topicos, function (t) {
       var on = t.id === sel.id;
       return '<button class="titem' + (on ? ' is-active' : '') + '" role="option" aria-selected="' + on + '" data-action="select-topic" data-d="' + d.id + '" data-t="' + t.id + '">' +
-        '<span class="titem__l">' + ic('diamond', 'titem__dot', 2) + '<span>' + t.nome + '</span>' + (isStudied(d, t) ? '<em class="tag">Estudado</em>' : '') + '</span>' + ic('chevronRight') + '</button>';
+        '<span class="titem__l">' + ic('diamond', 'titem__dot', 2) + '<span>' + t.nome + '</span>' + (D.especifico[d.id + '/' + t.id] ? '<em class="tag tag--pdf">Apostila</em>' : '') + (isStudied(d, t) ? '<em class="tag">Estudado</em>' : '') + '</span>' + ic('chevronRight') + '</button>';
     }) + '</div>' +
   '</div>' +
   '<aside class="tdetail" id="tdetail">' +
     ic('landmark', 'tdetail__ic', 1.3) +
+    (D.especifico[d.id + '/' + sel.id] ? '<span class="tdetail__badge">' + ic('pdf', '', 1.6) + 'Apostila ATEMPO · ' + D.especifico[d.id + '/' + sel.id].pdf.n + ' páginas</span>' : '') +
     '<h2>' + sel.nome + '</h2>' +
     '<p>' + sel.desc + '</p>' +
     '<a class="btn btn--navy" href="#/disciplina/' + d.id + '/' + sel.id + '">Ver formatos de estudo ' + ic('arrowRight', '', 2) + '</a>' +
@@ -404,7 +405,36 @@
     return shell('', inner, { bnav: 'materias', wide: true });
   }
 
+  function pageCount(c) { return c.pdf ? c.pdf.n : c.pages.length; }
+  function pdfImg(c, n) { return c.pdf.dir + '/p' + (n < 10 ? '0' : '') + n + '.jpg'; }
+  function pdfReal(c, d, t) {
+    var P = c.pdf, pg = ui.pdf.page, z = ui.pdf.zoom;
+    return '' +
+'<div class="viewer viewer--real">' +
+  '<div class="vbar">' +
+    '<div class="vbar__l"><a class="vlink" href="#/disciplina/' + d.id + '/' + t.id + '">' + ic('chevronLeft') + '<span>Voltar</span></a><button class="vbtn" data-action="pdf-toc" aria-label="Sumário">' + ic('menu') + '</button></div>' +
+    '<div class="vbar__c">' +
+      '<button class="vbtn" data-action="pdf-prev" aria-label="Página anterior"' + (pg <= 1 ? ' disabled' : '') + '>' + ic('chevronLeft') + '</button>' +
+      '<span class="vnum">' + pg + ' / ' + P.n + '</span>' +
+      '<button class="vbtn" data-action="pdf-next" aria-label="Próxima página"' + (pg >= P.n ? ' disabled' : '') + '>' + ic('chevronRight') + '</button>' +
+      '<span class="vsep"></span>' +
+      '<button class="vbtn" data-action="zoom" data-z="-20" aria-label="Diminuir zoom"' + (z <= 60 ? ' disabled' : '') + '>' + ic('minus') + '</button>' +
+      '<span class="vnum hide-sm">' + z + '%</span>' +
+      '<button class="vbtn" data-action="zoom" data-z="20" aria-label="Aumentar zoom"' + (z >= 200 ? ' disabled' : '') + '>' + ic('plus') + '</button>' +
+      '<button class="vbtn hide-sm" data-action="zoom" data-z="0" aria-label="Ajustar à largura">' + ic('target') + '</button>' +
+    '</div>' +
+    '<div class="vbar__r"><a class="vbtn" href="' + P.src + '" download aria-label="Baixar PDF" title="Baixar PDF">' + ic('download') + '</a>' +
+      '<a class="vbtn hide-sm" href="' + P.src + '" target="_blank" rel="noopener" aria-label="Abrir o PDF original para imprimir" title="Abrir PDF original">' + ic('printer') + '</a>' +
+      '<button class="vbtn hide-sm" data-action="fullscreen" data-el=".viewer" aria-label="Tela cheia">' + ic('maximize') + '</button></div>' +
+  '</div>' +
+  '<div class="vstage vstage--img' + (z > 100 ? ' is-zoom' : '') + '" data-swipe="pdf">' +
+    '<img class="vimg" src="' + pdfImg(c, pg) + '" style="width:' + z + '%" alt="Página ' + pg + ' de ' + P.n + ' da apostila ' + esc(t.nome) + '" draggable="false">' +
+  '</div>' +
+  '<div class="vfoot"><span>' + ic('pdf', '', 1.6) + 'Apostila ATEMPO · ' + esc(c.parte) + '</span><a href="' + P.src + '" target="_blank" rel="noopener">Abrir PDF original ' + ic('arrowRight', '', 2) + '</a></div>' +
+'</div>';
+  }
   function pdfViewer(c, d, t) {
+    if (c.pdf) return pdfReal(c, d, t);
     var pg = c.pages[ui.pdf.page - 1], n = 0;
     for (var i = 0; i < ui.pdf.page - 1; i++) n += c.pages[i].length;
     var body = map(pg, function (s, i) {
@@ -619,34 +649,83 @@
     return shell('historico', inner);
   }
 
+  /* ================= SIMULADOS ================= */
+  function simById(id) { return D.simulados.filter(function (x) { return x.id === id; })[0]; }
+  function simProg(id) { return store.get('sim:' + id, null); }
+  function simSave() { if (ui.sim) store.set('sim:' + ui.sim.id, { i: ui.sim.i, answers: ui.sim.answers }); }
+  function simAnswered(ans) { return ans.filter(function (a) { return a !== undefined && a !== null; }).length; }
+  function simBtn(s, label) {
+    var pr = simProg(s.id), n = pr ? simAnswered(pr.answers) : 0;
+    return n ? '<div class="scard__btns"><button class="btn btn--navy" data-action="sim-start" data-id="' + s.id + '">Continuar (' + n + '/' + s.qs.length + ') ' + ic('arrowRight', '', 2) + '</button>' +
+      '<button class="btn btn--ghost" data-action="sim-start" data-id="' + s.id + '" data-fresh="1">Recomeçar</button></div>'
+      : '<button class="btn btn--navy btn--block" data-action="sim-start" data-id="' + s.id + '">' + label + ' ' + ic('arrowRight', '', 2) + '</button>';
+  }
   function viewSimulados() {
     if (ui.sim) return shell('simulados', simRun());
-    var inner = pageHead('Simulados', 'Treine com questões no estilo das provas.') +
-      '<div class="sgrid">' + map(D.simulados, function (s) {
-        var b = state.best[s.id];
-        return '<div class="scard"><span class="scard__ic">' + ic('edit', '', 1.6) + '</span><h3>' + s.nome + '</h3><p>' + s.desc + '</p>' +
-          '<div class="scard__meta"><span>' + ic('filetext') + s.qs.length + ' questões</span><span>' + ic('clock') + s.min + ' min</span>' + (b !== undefined ? '<span class="scard__best">' + ic('trophy') + b + '%</span>' : '') + '</div>' +
-          '<button class="btn btn--navy btn--block" data-action="sim-start" data-id="' + s.id + '">' + (b !== undefined ? 'Refazer' : 'Iniciar simulado') + ' ' + ic('arrowRight', '', 2) + '</button></div>';
+    var main = simById('oab46'), apost = simById('empresarial'), b = state.best[main.id];
+    var areas = D.simulados.filter(function (s) { return s.area; });
+    var inner = pageHead('Simulados', 'Treine com questões reais da OAB e com as questões das suas apostilas.') +
+      '<section class="sfeat">' +
+        '<div class="sfeat__b"><span class="sfeat__tag">' + ic('trophy', '', 1.8) + 'Prova real · FGV</span><h2>' + main.nome + '</h2><p>' + main.desc + '</p>' +
+          '<div class="sfeat__meta"><span>' + ic('filetext') + main.qs.length + ' questões</span><span>' + ic('clock') + '5 horas</span><span>' + ic('book') + areas.length + ' disciplinas</span>' + (b !== undefined ? '<span class="sfeat__best">' + ic('trophy') + 'Melhor: ' + b + '%</span>' : '') + '</div>' +
+          simBtn(main, b !== undefined ? 'Refazer a prova' : 'Começar a prova') + '</div>' +
+        '<div class="sfeat__ring" aria-hidden="true"><b>80</b><small>questões</small></div>' +
+      '</section>' +
+      '<h3 class="ssec">Das suas apostilas</h3>' +
+      '<div class="sgrid">' + scard(apost, 'briefcase') + '</div>' +
+      '<h3 class="ssec">Treine por disciplina <small>46º Exame de Ordem</small></h3>' +
+      '<div class="agrid">' + map(areas, function (s) {
+        var bb = state.best[s.id], pr = simProg(s.id), n = pr ? simAnswered(pr.answers) : 0;
+        return '<button class="acard" data-action="sim-start" data-id="' + s.id + '"><b>' + s.nome + '</b><small>' + s.qs.length + ' questões' + (n ? ' · ' + n + ' feitas' : '') + '</small>' +
+          (bb !== undefined ? '<em>' + bb + '%</em>' : ic('chevronRight', 'acard__go')) + '</button>';
       }) + '</div>';
     return shell('simulados', inner);
   }
+  function scard(s, icon) {
+    var b = state.best[s.id];
+    return '<div class="scard"><span class="scard__ic">' + ic(icon || 'edit', '', 1.6) + '</span><h3>' + s.nome + '</h3><p>' + s.desc + '</p>' +
+      '<div class="scard__meta"><span>' + ic('filetext') + s.qs.length + ' questões</span><span>' + ic('clock') + s.min + ' min</span>' + (b !== undefined ? '<span class="scard__best">' + ic('trophy') + b + '%</span>' : '') + '</div>' +
+      simBtn(s, b !== undefined ? 'Refazer' : 'Iniciar simulado') + '</div>';
+  }
+  function simResult(s, S) {
+    var ok = 0, byArea = {}, order = [];
+    s.qs.forEach(function (q, i) {
+      var k = q.areaNome || 'Questões';
+      if (!byArea[k]) { byArea[k] = { ok: 0, n: 0 }; order.push(k); }
+      byArea[k].n++;
+      if (S.answers[i] === q.a) { ok++; byArea[k].ok++; }
+    });
+    var N = s.qs.length, pct = Math.round(ok / N * 100), blank = N - simAnswered(S.answers);
+    var full = s.id === 'oab46', pass = ok >= 40;
+    var head = full ? (pass ? 'Aprovada na 1ª fase, ' + esc(state.nome) + '!' : 'Faltaram ' + (40 - ok) + ' acertos para a aprovação') : (pct >= 70 ? 'Mandou bem, ' + esc(state.nome) + '!' : 'Continue praticando!');
+    return '<div class="simres">' + ring(pct, 120) + '<b class="simres__pct">' + pct + '%</b><h2>' + head + '</h2>' +
+      '<p>Você acertou <b>' + ok + ' de ' + N + '</b> questões em “' + esc(s.nome) + '”' + (blank ? ' (' + blank + ' em branco)' : '') + '.' + (full ? ' Na OAB, a aprovação na 1ª fase exige 40 acertos.' : '') + '</p>' +
+      (order.length > 1 ? '<div class="sarea">' + map(order, function (k) {
+        var x = byArea[k], p2 = Math.round(x.ok / x.n * 100);
+        return '<div class="sarea__r"><span>' + esc(k) + '</span><div class="bar bar--light"><i style="width:' + p2 + '%"></i></div><b>' + x.ok + '/' + x.n + '</b></div>';
+      }) + '</div>' : '') +
+      '<div class="simres__btns"><button class="btn btn--navy" data-action="sim-review">' + ic('history', '', 2) + ' Revisar respostas</button><button class="btn btn--ghost" data-action="sim-start" data-id="' + s.id + '" data-fresh="1">Refazer</button><button class="btn btn--ghost" data-action="sim-exit">Voltar aos simulados</button></div></div>';
+  }
   function simRun() {
-    var S = ui.sim, s = D.simulados.filter(function (x) { return x.id === S.id; })[0];
-    if (S.i >= s.qs.length) {
-      var ok = S.answers.filter(function (a, i) { return a === s.qs[i].a; }).length, pct = Math.round(ok / s.qs.length * 100);
-      return '<div class="simres">' + ring(pct, 120) + '<b class="simres__pct">' + pct + '%</b><h2>' + (pct >= 70 ? 'Mandou bem, ' + esc(state.nome) + '!' : 'Continue praticando!') + '</h2>' +
-        '<p>Você acertou ' + ok + ' de ' + s.qs.length + ' questões em “' + s.nome + '”.</p>' +
-        '<div class="simres__btns"><button class="btn btn--navy" data-action="sim-start" data-id="' + s.id + '">Refazer</button><button class="btn btn--ghost" data-action="sim-exit">Voltar aos simulados</button></div></div>';
-    }
-    var q = s.qs[S.i], ans = S.answers[S.i];
-    return '<button class="back" data-action="sim-exit">' + ic('arrowLeft') + ' Sair do simulado</button>' +
-      '<div class="simq"><div class="simq__top"><small>' + s.nome + '</small><span>Questão ' + (S.i + 1) + ' de ' + s.qs.length + '</span></div>' +
-      '<div class="bar bar--light"><i style="width:' + (S.i / s.qs.length * 100) + '%"></i></div>' +
-      '<h2>' + q.q + '</h2>' + map(q.opts, function (o, oi) {
-        var cls = ans === undefined ? '' : (oi === q.a ? ' ok' : (oi === ans ? ' bad' : ' dim'));
-        return '<button class="opt opt--lg' + cls + '" data-action="sim-answer" data-o="' + oi + '"' + (ans !== undefined ? ' disabled' : '') + '><span class="opt__l">' + 'ABCD'[oi] + '</span>' + o + '</button>';
-      }) + (ans !== undefined ? '<p class="q__exp ' + (ans === q.a ? 'is-ok' : 'is-bad') + '">' + (ans === q.a ? 'Correto! ' : 'Resposta correta: ' + 'ABCD'[q.a] + '. ') + q.exp + '</p>' +
-        '<button class="btn btn--navy" data-action="sim-next">' + (S.i + 1 < s.qs.length ? 'Próxima questão' : 'Ver resultado') + ' ' + ic('arrowRight', '', 2) + '</button>' : '') + '</div>';
+    var S = ui.sim, s = simById(S.id), N = s.qs.length;
+    if (S.done) return simResult(s, S);
+    var q = s.qs[S.i], ans = S.answers[S.i], has = ans !== undefined && ans !== null, done = simAnswered(S.answers);
+    var stem = q.p ? '<div class="simq__stem">' + map(q.p, function (x, i) { return '<p' + (i === q.p.length - 1 ? ' class="simq__cmd"' : '') + '>' + esc(x) + '</p>'; }) + '</div>' : '<h2>' + q.q + '</h2>';
+    var nav = S.nav ? '<div class="qnav">' + map(s.qs, function (x, i) {
+      var a = S.answers[i], c = a === undefined || a === null ? '' : (a === x.a ? ' ok' : ' bad');
+      return '<button class="qnav__b' + c + (i === S.i ? ' is-cur' : '') + '" data-action="sim-go" data-i="' + i + '" aria-label="Questão ' + (i + 1) + '">' + (i + 1) + '</button>';
+    }) + '<div class="qnav__foot"><span><i class="ok"></i>Certa</span><span><i class="bad"></i>Errada</span><span><i></i>Em branco</span><button class="btn btn--navy btn--sm" data-action="sim-finish">Finalizar (' + done + '/' + N + ')</button></div></div>' : '';
+    return '<div class="simbar"><button class="back" data-action="sim-exit">' + ic('arrowLeft') + ' Sair</button><span class="simbar__save">' + ic('check', '', 2) + 'Progresso salvo</span></div>' +
+      '<div class="simq"><div class="simq__top"><small>' + esc(s.nome) + '</small><span>' + (S.i + 1) + ' / ' + N + '</span></div>' +
+      '<div class="bar bar--light"><i style="width:' + (done / N * 100) + '%"></i></div>' +
+      '<div class="simq__tools"><span class="simq__area">' + esc(q.areaNome || '') + (q.n ? ' · Questão ' + q.n : '') + '</span><button class="simq__navbtn' + (S.nav ? ' is-on' : '') + '" data-action="sim-nav">' + ic('menu', '', 2) + 'Questões</button></div>' +
+      nav + stem + map(q.opts, function (o, oi) {
+        var cls = !has ? '' : (oi === q.a ? ' ok' : (oi === ans ? ' bad' : ' dim'));
+        return '<button class="opt opt--lg' + cls + '" data-action="sim-answer" data-o="' + oi + '"' + (has ? ' disabled' : '') + '><span class="opt__l">' + 'ABCD'[oi] + '</span><span>' + esc(o) + '</span></button>';
+      }) + (has ? '<p class="q__exp ' + (ans === q.a ? 'is-ok' : 'is-bad') + '">' + (ans === q.a ? 'Correto! ' : 'Resposta correta: ' + 'ABCD'[q.a] + '. ') + esc(q.exp) + '</p>' : '') +
+      '<div class="simq__nav"><button class="btn btn--ghost" data-action="sim-prev"' + (S.i === 0 ? ' disabled' : '') + '>' + ic('chevronLeft', '', 2) + 'Anterior</button>' +
+        (S.i + 1 < N ? '<button class="btn ' + (has ? 'btn--navy' : 'btn--ghost') + '" data-action="sim-next">' + (has ? 'Próxima' : 'Pular') + ic('chevronRight', '', 2) + '</button>'
+          : '<button class="btn btn--navy" data-action="sim-finish">Ver resultado ' + ic('arrowRight', '', 2) + '</button>') + '</div></div>';
   }
 
   function toggle(k, label, desc) {
@@ -718,6 +797,8 @@
     if (keepScroll) window.scrollTo(0, sc);
     else if (path !== lastPath) window.scrollTo(0, 0);
     lastPath = path;
+    var vimg = document.querySelector('.vimg');
+    if (vimg) { var nx = vimg.getAttribute('src').replace(/p(\d+)\.jpg$/, function (m, n) { var k = +n + 1; return 'p' + (k < 10 ? '0' : '') + k + '.jpg'; }); (new Image()).src = nx; }
   }
 
   /* ---------- player ---------- */
@@ -802,9 +883,9 @@
       case 'notif':
         if (document.getElementById('pop')) { closePop(); break; }
         openPop('<div class="pop__head"><b>Notificações</b><button class="link" data-action="toast" data-msg="Todas marcadas como lidas.">Marcar como lidas</button></div>' +
-          notif('headphones', 'Novo podcast disponível', 'Direitos Fundamentais — 15 min', 'há 10 min', '#/estudo/constitucional/direitos-fundamentais/podcast') +
+          notif('pdf', 'Apostilas de Empresarial disponíveis', 'Partes 01, 02 e 03 — PDF, podcast e videoaula', 'há 10 min', '#/disciplina/empresarial') +
           notif('trophy', 'Meta semanal quase lá!', 'Você já completou ' + progress() + '% do seu progresso', 'há 2 h', '#/materias') +
-          notif('edit', 'Simulado liberado', 'Direito Empresarial — Teoria da Empresa', 'ontem', '#/simulados'), el);
+          notif('edit', 'Novo simulado: 46º Exame de Ordem', '80 questões com gabarito oficial da FGV', 'ontem', '#/simulados'), el);
         break;
       case 'usermenu':
         if (document.getElementById('pop')) { closePop(); break; }
@@ -832,8 +913,16 @@
       case 'tab': ui.tab = +ds.i; render(true); break;
       case 'answer': ui.answers[ds.k] = +ds.o; render(true); break;
       case 'pdf-prev': if (ui.pdf.page > 1) { ui.pdf.page--; render(true); } break;
-      case 'pdf-next': ui.pdf.page++; { var pp = route(); var cc = content(disc(pp[1]), topic(disc(pp[1]), pp[2])); ui.pdf.page = Math.min(ui.pdf.page, cc.pages.length); } render(true); break;
-      case 'zoom': var z = +ds.z; ui.pdf.zoom = z === 0 ? 100 : Math.max(60, Math.min(160, ui.pdf.zoom + z)); render(true); break;
+      case 'pdf-next': ui.pdf.page++; { var pp = route(); var cc = content(disc(pp[1]), topic(disc(pp[1]), pp[2])); ui.pdf.page = Math.min(ui.pdf.page, pageCount(cc)); } render(true); break;
+      case 'pdf-go': ui.pdf.page = +ds.p; closeModal(); render(true); { var vs = document.querySelector('.vstage'); if (vs) vs.scrollTop = 0; } break;
+      case 'pdf-toc':
+        var tp = route(), tc = content(disc(tp[1]), topic(disc(tp[1]), tp[2]));
+        openModal('<div class="toc"><small>' + esc(tc.parte) + '</small><h2>Sumário</h2>' + map(tc.pdf.sumario, function (x) {
+          return '<button class="toc__i' + (x[0] === ui.pdf.page ? ' is-on' : '') + '" data-action="pdf-go" data-p="' + x[0] + '"><span>' + esc(x[1]) + '</span><b>p. ' + x[0] + '</b></button>';
+        }) + '</div>', 'modal--toc');
+        break;
+      case 'zoom': var z = +ds.z, zp = route(), zc = content(disc(zp[1]), topic(disc(zp[1]), zp[2]));
+        ui.pdf.zoom = z === 0 ? 100 : Math.max(60, Math.min(zc.pdf ? 200 : 160, ui.pdf.zoom + z)); render(true); break;
       case 'fullscreen':
         var fe = document.querySelector(ds.el);
         if (document.fullscreenElement) document.exitFullscreen();
@@ -857,22 +946,27 @@
         if (rp && rp.catch) rp.catch(function () { toast('Toque novamente para ouvir.'); });
         break;
       case 'mm': ui.mm = ui.mm === +ds.i ? null : +ds.i; render(true); break;
-      case 'sim-start': ui.sim = { id: ds.id, i: 0, answers: [] }; render(); break;
-      case 'sim-answer':
-        ui.sim.answers[ui.sim.i] = +ds.o; render(true); break;
-      case 'sim-next':
-        ui.sim.i++;
-        var s = D.simulados.filter(function (x) { return x.id === ui.sim.id; })[0];
-        if (ui.sim.i >= s.qs.length) {
-          var ok = ui.sim.answers.filter(function (a, i) { return a === s.qs[i].a; }).length;
-          var pct = Math.round(ok / s.qs.length * 100);
-          state.best[s.id] = Math.max(state.best[s.id] || 0, pct); save('best');
-        }
-        render(); break;
-      case 'sim-exit': ui.sim = null; render(); break;
+      case 'sim-start':
+        var pr0 = ds.fresh ? null : simProg(ds.id);
+        ui.sim = { id: ds.id, i: pr0 ? Math.min(pr0.i, simById(ds.id).qs.length - 1) : 0, answers: pr0 ? pr0.answers : [], done: false, nav: false };
+        simSave(); render(); window.scrollTo(0, 0); break;
+      case 'sim-answer': ui.sim.answers[ui.sim.i] = +ds.o; simSave(); render(true); break;
+      case 'sim-next': case 'sim-prev': case 'sim-go':
+        ui.sim.i = A === 'sim-go' ? +ds.i : ui.sim.i + (A === 'sim-next' ? 1 : -1);
+        ui.sim.i = Math.max(0, Math.min(simById(ui.sim.id).qs.length - 1, ui.sim.i));
+        ui.sim.nav = false; simSave(); render(); window.scrollTo(0, 0); break;
+      case 'sim-nav': ui.sim.nav = !ui.sim.nav; render(true); break;
+      case 'sim-finish':
+        var sf = simById(ui.sim.id), okf = sf.qs.filter(function (q, i) { return ui.sim.answers[i] === q.a; }).length;
+        state.best[sf.id] = Math.max(state.best[sf.id] || 0, Math.round(okf / sf.qs.length * 100)); save('best');
+        ui.sim.done = true; ui.sim.nav = false;
+        try { localStorage.removeItem('atempo:sim:' + sf.id); } catch (er) { /* sem armazenamento */ }
+        render(); window.scrollTo(0, 0); break;
+      case 'sim-review': ui.sim.done = false; ui.sim.i = 0; ui.sim.nav = true; render(); window.scrollTo(0, 0); break;
+      case 'sim-exit': ui.sim = null; render(); window.scrollTo(0, 0); break;
       case 'pref': state.prefs[ds.k] = !state.prefs[ds.k]; save('prefs'); render(true); toast('Preferência atualizada.'); break;
       case 'reset':
-        ['nome', 'favs', 'studied', 'hist', 'prefs', 'best', 'lastFmt'].forEach(function (x) { try { localStorage.removeItem('atempo:' + x); } catch (er) { /* sem armazenamento */ } });
+        ['nome', 'favs', 'studied', 'hist', 'prefs', 'best', 'lastFmt'].concat(D.simulados.map(function (x) { return 'sim:' + x.id; })).forEach(function (x) { try { localStorage.removeItem('atempo:' + x); } catch (er) { /* sem armazenamento */ } });
         location.hash = '#/app'; location.reload(); break;
     }
   });
@@ -925,7 +1019,7 @@
   document.addEventListener('touchend', function (e) {
     if (sx === null) return;
     var dx = e.changedTouches[0].clientX - sx, dy = e.changedTouches[0].clientY - sy;
-    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5) {
+    if (Math.abs(dx) > 60 && Math.abs(dx) > Math.abs(dy) * 1.5 && ui.pdf.zoom <= 100) {
       var b = document.querySelector('[data-action="' + (dx < 0 ? 'pdf-next' : 'pdf-prev') + '"]:not([disabled])');
       if (b) b.click();
     }

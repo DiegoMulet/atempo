@@ -13,6 +13,12 @@ Todas as interações são simuladas — não há back-end.
 - Abas Resumo / Referências / Questões (quiz), Marcar como estudado, Favoritar
 - Minhas Matérias, Favoritos, Histórico, Simulados (com resultado), Configurações e Perfil
 
+## Conteúdo real
+- **Direito Empresarial — apostilas ATEMPO (Partes 01, 02 e 03)**: o PDF original fica em `pdf/` e é exibido página a página
+  (imagens em `pdf/<assunto>/pNN.jpg`). Resumo, questões, mapa mental, podcast e videoaula dessas aulas vêm de `js/empresarial.js`.
+- **Simulado do 46º Exame de Ordem Unificado** (OAB/FGV, 03/05/2026, Tipo 1 – Branca): as 80 questões em `js/oab46.js`,
+  com o gabarito definitivo da FGV. Também é possível treinar por disciplina; o progresso fica salvo no navegador.
+
 ## Áudio real
 Podcast (diálogo entre Rafael e a Prof.ª Helena), narração da Videoaula (com slides sincronizados) e "Ouvir resumo"
 são MP3 reais em `audio/`, gerados com vozes neurais pt-BR (edge-tts). Para regenerar após mudar o conteúdo:
